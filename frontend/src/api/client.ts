@@ -26,6 +26,9 @@ import type {
   Requirement,
   RequirementUpdate,
   ReviewDecision,
+  SolicitationDetailsAnalysis,
+  SolicitationDetailsApplyRequest,
+  SolicitationDetailsApplyResponse,
 } from '../types'
 
 export class ApiError extends Error {
@@ -130,6 +133,27 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(update),
     }),
+
+  getSolicitationDetails: (projectId: string) =>
+    request<SolicitationDetailsAnalysis>(
+      `/api/projects/${encodeURIComponent(projectId)}/solicitation-details`,
+    ),
+
+  analyzeSolicitationDetails: (projectId: string) =>
+    request<SolicitationDetailsAnalysis>(
+      `/api/projects/${encodeURIComponent(projectId)}/solicitation-details/analyze`,
+      { method: 'POST' },
+    ),
+
+  applySolicitationDetails: (projectId: string, update: SolicitationDetailsApplyRequest) =>
+    request<SolicitationDetailsApplyResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/solicitation-details/apply`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      },
+    ),
 
   getWorkflow: (projectId: string) =>
     request<ProjectWorkflow>(`/api/projects/${encodeURIComponent(projectId)}/workflow`),

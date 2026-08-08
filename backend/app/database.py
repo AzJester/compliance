@@ -17,6 +17,7 @@ from .models import (
     DocumentProfile,
     Project,
     ProjectWorkflow,
+    SolicitationProfile,
     WorkflowStage,
     WorkflowStatus,
     utc_now,
@@ -69,6 +70,7 @@ def initialize_database(engine: Engine) -> None:
         literal(DocumentClassification.UNCLASSIFIED.value),
         literal(now),
     )
+    solicitation_profile_defaults = select(Project.id, literal(now))
     with engine.begin() as connection:
         connection.execute(
             sqlite_insert(ProjectWorkflow)
@@ -84,6 +86,14 @@ def initialize_database(engine: Engine) -> None:
             .from_select(
                 ["document_id", "project_id", "classification", "updated_at"],
                 document_defaults,
+            )
+        )
+        connection.execute(
+            sqlite_insert(SolicitationProfile)
+            .prefix_with("OR IGNORE")
+            .from_select(
+                ["project_id", "updated_at"],
+                solicitation_profile_defaults,
             )
         )
 

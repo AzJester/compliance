@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import type {
   Project,
   ProjectDocument,
+  DocumentProfileUpdate,
   ProjectView,
   ProjectWorkflow,
   ReadinessSummary,
@@ -18,6 +19,7 @@ import { ProjectDashboard } from './ProjectDashboard'
 import { ProposalWorkspace } from './ProposalWorkspace'
 import { ReportsWorkspace } from './ReportsWorkspace'
 import { RequirementsWorkspace } from './RequirementsWorkspace'
+import { SolicitationDetailsReview } from './SolicitationDetailsReview'
 import {
   WorkflowRail,
   type WorkflowStage,
@@ -32,7 +34,7 @@ interface ProjectOverviewProps {
   uploadState: UploadState
   uploadMessage: string | null
   isAnonymous: boolean
-  onUpload: (files: File[]) => Promise<void>
+  onUpload: (files: File[], profile: DocumentProfileUpdate) => Promise<void>
   onRefresh: () => void
   onProjectUpdated: (project: Project) => void
 }
@@ -374,15 +376,24 @@ export function ProjectOverview({
         )}
 
         {activeStage === 'verify-package' && (
-          <PackageVerification
-            projectId={project.id}
-            documents={documents}
-            onVerified={() => {
-              setPackageVerified(true)
-              void refreshProgress()
-              navigateStage('requirements', true)
-            }}
-          />
+          <>
+            <SolicitationDetailsReview
+              project={project}
+              documents={documents}
+              onProjectUpdated={onProjectUpdated}
+              onProgressChanged={refreshProgress}
+              onEditManually={() => navigateStage('setup', true)}
+            />
+            <PackageVerification
+              projectId={project.id}
+              documents={documents}
+              onVerified={() => {
+                setPackageVerified(true)
+                void refreshProgress()
+                navigateStage('requirements', true)
+              }}
+            />
+          </>
         )}
 
         {activeStage === 'requirements' && (

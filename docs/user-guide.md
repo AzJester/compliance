@@ -46,7 +46,7 @@ Use one project for one solicitation package. To correct its metadata later, ope
 
 ## 2. Upload and classify solicitation files
 
-Open **Files**, choose or drag files into **Import documents**, acknowledge the PUBLIC-data boundary when prompted, and upload them.
+Open **Files**, choose or drag files into **Import documents**, select one role for that upload batch, acknowledge the PUBLIC-data boundary when prompted, and upload them. Upload files with different roles in separate batches. The application does not silently guess a file's role.
 
 Supported formats are:
 
@@ -60,7 +60,7 @@ Legacy Office files (`.doc`, `.xls`, and `.ppt`) are not supported. Password-pro
 
 The local defaults are 100 files per request, 100 MiB per file, and 500 MiB per request. The hosted Blueprint uses lower limits: 10 files, 20 MiB per file, and 50 MiB per request.
 
-For every manifest row, select **Classify** and choose the file role:
+Choose the applicable file role before uploading. You can later select **Classify** on a manifest row to correct it:
 
 - **Base solicitation** for the primary RFP or solicitation.
 - **Amendment** for formal changes that may supersede earlier text.
@@ -83,7 +83,22 @@ A duplicate remains visible for package provenance but is not analyzed twice wit
 
 ## 3. Verify the package
 
-Open **Verify**. For each checklist item, choose one status:
+Open **Verify**. The first panel is **Solicitation details detected**. When the project contains an extracted **Base solicitation** or **Amendment**, the application uses deterministic rules to look for:
+
+- Solicitation title and solicitation number
+- Issuing agency or office
+- Proposal receipt deadline and source time zone
+- NAICS and PSC/FSC codes
+- Set-aside category and contract type
+- Named points of contact, including their stated roles and contact details
+
+Detection does not change the project. For each candidate, compare the displayed value with its source document, page or structural locator, exact quoted passage, file hash, confidence label, and rationale. Source text is displayed as inert text, not executable markup or a trusted link.
+
+When a base solicitation and amendment disagree, the panel displays a conflict and requires an explicit selection. A reliably numbered amendment is recommended only when its language explicitly changes the field; upload time alone never determines precedence. Ambiguous deadlines, including missing or unclear time zones, cannot be applied. Select the values to approve, enter a self-reported reviewer name, and choose **Apply approved details**. All selected values are revalidated and applied together; if one is stale or invalid, none are changed.
+
+The approved profile remains visible in the panel. Adding or reclassifying a base solicitation or amendment makes the earlier analysis stale and prevents reuse until **Analyze again** completes. Attachments, CDRLs, Q&A files, references, proposal volumes, and unclassified files are not authoritative sources for this screen. If a value cannot be detected reliably, use the project-details editor and verify the controlling source manually.
+
+Below detected details, complete the package checklist. For each item, choose one status:
 
 - **Pending review** when the check is not complete.
 - **Verified** when the package satisfies the check.
@@ -92,7 +107,7 @@ Open **Verify**. For each checklist item, choose one status:
 
 Enter a reviewer or team label and an optional verification note, then save progress. All checks must be Verified or Not applicable, with no Issue found status, before package verification is complete.
 
-Adding or reclassifying solicitation material invalidates affected package verification and readiness. Reconcile the new package state before relying on earlier findings.
+Adding or reclassifying authoritative solicitation material invalidates affected detected details, package verification, and readiness. Reconcile the new package state before relying on earlier findings.
 
 ## 4. Extract and review requirements
 
@@ -169,7 +184,7 @@ Treat backups as at least as sensitive as their source. Do not place runtime dat
 ## Current limitations
 
 - No OCR for scanned PDFs.
-- No automated amendment precedence, superseded-language resolution, or incorporated-reference reconciliation.
+- Detected details flag amendment conflicts and can recommend an explicitly changed value from a reliably numbered amendment, but complete amendment precedence, superseded-language resolution, and incorporated-reference reconciliation still require human review.
 - Section L and M registers use extracted text and reviewer classification; structured volume/page-limit and factor-hierarchy models remain future work.
 - Register pagination is currently performed in the browser after retrieval.
 - The hosted deployment has no sign-in, privacy, ownership, roles, tenant isolation, verified identities, or user-facing deletion/retention workflow.

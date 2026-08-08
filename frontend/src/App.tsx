@@ -7,6 +7,7 @@ import { ProjectSidebar } from './components/ProjectSidebar'
 import { SecurityBanner } from './components/SecurityBanner'
 import type {
   AccessMode,
+  DocumentProfileUpdate,
   HealthState,
   Project,
   ProjectCreate,
@@ -249,14 +250,14 @@ export function App() {
     }
   }
 
-  const uploadDocuments = async (files: File[]) => {
+  const uploadDocuments = async (files: File[], profile: DocumentProfileUpdate) => {
     if (!selectedId || selectedProject?.id !== selectedId) return
     const projectId = selectedId
     const selectionEpoch = selectionEpochRef.current
     setUploadState('uploading')
     setUploadMessage(null)
     try {
-      const uploaded = await api.uploadDocuments(projectId, files)
+      const uploaded = await api.uploadDocuments(projectId, files, profile)
       if (
         selectedIdRef.current !== projectId ||
         selectionEpochRef.current !== selectionEpoch
@@ -276,7 +277,8 @@ export function App() {
         selectionEpochRef.current !== selectionEpoch
       ) return
       setUploadState('success')
-      setUploadMessage(`${files.length} ${files.length === 1 ? 'file was' : 'files were'} added to the manifest.`)
+      const role = profile.classification.replaceAll('_', ' ').toLowerCase()
+      setUploadMessage(`${files.length} ${files.length === 1 ? 'file was' : 'files were'} added as ${role}.`)
     } catch (error) {
       if (
         selectedIdRef.current !== projectId ||

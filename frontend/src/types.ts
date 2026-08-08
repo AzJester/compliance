@@ -29,6 +29,114 @@ export interface ProjectUpdate {
   due_timezone?: string | null
 }
 
+export type SolicitationDetailFieldKey =
+  | 'title'
+  | 'solicitation_number'
+  | 'agency'
+  | 'due_at'
+  | 'naics_code'
+  | 'psc_code'
+  | 'set_aside'
+  | 'contract_type'
+  | 'points_of_contact'
+
+export type SolicitationDetailStatus = 'NOT_FOUND' | 'DETECTED' | 'CONFLICT' | 'NEEDS_INPUT'
+export type SolicitationDetailConfidence = 'HIGH' | 'MEDIUM' | 'LOW'
+
+export interface SolicitationDetailCandidate {
+  id: string
+  field_key: SolicitationDetailFieldKey
+  value: string
+  normalized_value: Record<string, unknown>
+  document_id: string
+  document_name: string
+  document_classification: DocumentClassification
+  is_amendment: boolean
+  amendment_number: number | null
+  explicit_change: boolean
+  source_start: number
+  source_end: number
+  source_locator: string
+  page_number: number | null
+  excerpt: string
+  confidence: number
+  confidence_level: SolicitationDetailConfidence
+  detection_rationale: string
+  detection_pattern: string
+  applicable: boolean
+  needs_input: string | null
+  document_sha256: string
+}
+
+export interface SolicitationDetailField {
+  field_key: SolicitationDetailFieldKey
+  label: string
+  repeatable: boolean
+  status: SolicitationDetailStatus
+  conflict: boolean
+  recommended_candidate_id: string | null
+  recommended_candidate_ids: string[]
+  candidates: SolicitationDetailCandidate[]
+}
+
+export interface SolicitationProfile {
+  project_id: string
+  issuing_office: string | null
+  naics_code: string | null
+  psc_code: string | null
+  set_aside: string | null
+  contract_type: string | null
+  points_of_contact: Array<Record<string, unknown>>
+  updated_at: string
+}
+
+export interface SolicitationDetailDecision {
+  id: string
+  project_id: string
+  run_id: string
+  candidate_id: string
+  field_key: SolicitationDetailFieldKey
+  reviewer: string
+  previous_value: unknown
+  applied_value: unknown
+  applied_at: string
+}
+
+export interface SolicitationDetailsAnalysis {
+  project_id: string
+  run_id: string
+  analyzed_at: string
+  input_fingerprint: string
+  rule_version: string
+  stale: boolean
+  project_updated_at: string
+  profile_updated_at: string
+  profile: SolicitationProfile
+  fields: SolicitationDetailField[]
+  decisions: SolicitationDetailDecision[]
+}
+
+export interface SolicitationDetailApproval {
+  field_key: SolicitationDetailFieldKey
+  candidate_ids: string[]
+}
+
+export interface SolicitationDetailsApplyRequest {
+  reviewer: string
+  expected_project_updated_at: string
+  expected_profile_updated_at: string
+  run_id: string
+  approvals: SolicitationDetailApproval[]
+}
+
+export interface SolicitationDetailsApplyResponse {
+  project: Project
+  profile: SolicitationProfile
+  applied_fields: SolicitationDetailFieldKey[]
+  decisions: SolicitationDetailDecision[]
+  analysis: SolicitationDetailsAnalysis
+}
+
 export type WorkflowStage =
   | 'PROJECT_SETUP'
   | 'SOLICITATION_FILES'

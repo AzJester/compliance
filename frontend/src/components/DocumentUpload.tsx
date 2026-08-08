@@ -1,14 +1,23 @@
 import { useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from 'react'
-import type { UploadState } from '../types'
+import type { DocumentClassification, DocumentProfileUpdate, UploadState } from '../types'
 
 interface DocumentUploadProps {
   state: UploadState
   message: string | null
   isAnonymous: boolean
-  onUpload: (files: File[]) => Promise<void>
+  onUpload: (files: File[], profile: DocumentProfileUpdate) => Promise<void>
 }
 
 const acceptedExtensions = ['pdf', 'docx', 'xlsx', 'pptx', 'zip']
+
+const sourceRoles: Array<{ value: DocumentClassification; label: string }> = [
+  { value: 'BASE_SOLICITATION', label: 'Base solicitation / RFP' },
+  { value: 'AMENDMENT', label: 'Amendment' },
+  { value: 'ATTACHMENT', label: 'Attachment or exhibit' },
+  { value: 'CDRL', label: 'CDRL / DD Form 1423' },
+  { value: 'Q_AND_A', label: 'Questions and answers' },
+  { value: 'REFERENCE', label: 'Reference only (context, not requirements)' },
+]
 
 function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`
@@ -18,6 +27,8 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
   const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [publicDataAcknowledged, setPublicDataAcknowledged] = useState(false)
+  const [role, setRole] = useState<DocumentClassification | ''>('')
+  const [roleNote, setRoleNote] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = (incoming: File[]) => {
@@ -40,11 +51,16 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
   }
 
   const submit = async () => {
-    if (!files.length || (isAnonymous && !publicDataAcknowledged)) return
+    if (!files.length || !role || (isAnonymous && !publicDataAcknowledged)) return
     try {
-      await onUpload(files)
+      await onUpload(files, {
+        classification: role,
+        classification_notes: roleNote.trim() || null,
+      })
       setFiles([])
       setPublicDataAcknowledged(false)
+      setRole('')
+      setRoleNote('')
     } catch {
       // The parent reports the actionable API error and preserves this selection for retry.
     }
@@ -113,6 +129,8 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
               onClick={() => {
                 setFiles([])
                 setPublicDataAcknowledged(false)
+                setRole('')
+                setRoleNote('')
               }}
               disabled={isUploading}
             >
@@ -138,6 +156,38 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
               </li>
             ))}
           </ul>
+          <div className="upload-role">
+            <div className="upload-role__heading">
+              <strong>Assign one role to this upload batch</strong>
+              <span>Upload files with different roles in separate batches. Roles are never guessed silently.</span>
+            </div>
+            <div className="upload-role__fields">
+              <label>
+                Document role <span aria-hidden="true">*</span>
+                <select
+                  value={role}
+                  onChange={(event) => setRole(event.target.value as DocumentClassification | '')}
+                  disabled={isUploading}
+                  required
+                >
+                  <option value="">Choose a role…</option>
+                  {sourceRoles.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label>
+                Package note <span>(optional)</span>
+                <input
+                  value={roleNote}
+                  onChange={(event) => setRoleNote(event.target.value)}
+                  placeholder={role === 'AMENDMENT' ? 'Example: Amendment 0002 supersedes the due date' : 'Add context for reviewers'}
+                  disabled={isUploading}
+                />
+              </label>
+            </div>
+            {role === 'REFERENCE' && (
+              <p role="note">Reference files provide context only and are excluded from requirements, detected solicitation details, CDRLs, and readiness totals.</p>
+            )}
+          </div>
           {isAnonymous && (
             <label className="upload-acknowledgement">
               <input
@@ -156,7 +206,7 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
             className="button button--primary"
             type="button"
             onClick={submit}
-            disabled={isUploading || (isAnonymous && !publicDataAcknowledged)}
+            disabled={isUploading || !role || (isAnonymous && !publicDataAcknowledged)}
           >
             {isUploading
               ? isAnonymous ? 'Uploading to shared storage…' : 'Uploading files…'
