@@ -1,8 +1,27 @@
-import type { CDRL } from '../types'
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../api/client'
+import type {
+  CDRL,
+  CDRLAdjudication,
+  CDRLAdjudicationStatus,
+} from '../types'
 
 interface CdrlRegisterProps {
+  projectId: string
   cdrls: CDRL[]
   onReviewRequirement: (requirementId: string) => void
+  onAdjudicationChanged?: () => void | Promise<void>
+  hasRequirements?: boolean
+  extractionAttempted?: boolean
+  isExtracting?: boolean
+}
+
+function adjudicationLabel(adjudication?: CDRLAdjudication) {
+  if (!adjudication) return 'Pending review'
+  if (!adjudication.fresh && adjudication.status !== 'PENDING') return 'Re-review required'
+  if (adjudication.status === 'WAIVED') return adjudication.effective_ready ? 'Waived' : 'Waiver blocked'
+  if (adjudication.status === 'REVIEWED') return adjudication.effective_ready ? 'Reviewed' : 'Reviewed — incomplete'
+  return 'Pending review'
 }
 
 function cdrlValue(cdrl: CDRL, ...keys: (keyof CDRL)[]): string {
@@ -45,94 +64,233 @@ function missingFieldLabel(field: string) {
   return blockDefinitions.find((block) => block.field === field)?.label ?? field
 }
 
-export function CdrlRegister({ cdrls, onReviewRequirement }: CdrlRegisterProps) {
+function completeness(cdrl: CDRL) {
+  if (typeof cdrl.completeness === 'number') {
+    return cdrl.completeness <= 1 ? Math.round(cdrl.completeness * 100) : Math.round(cdrl.completeness)
+  }
+  const captured = blockDefinitions.filter(({ key }) => Boolean(cdrl[key])).length
+  return Math.round((captured / blockDefinitions.length) * 100)
+}
+
+export function CdrlRegister({
+  projectId,
+  cdrls,
+  onReviewRequirement,
+  onAdjudicationChanged,
+  hasRequirements = false,
+  extractionAttempted = false,
+  isExtracting = false,
+}: CdrlRegisterProps) {
+  const [selectedCdrlId, setSelectedCdrlId] = useState<string | null>(null)
+  const [adjudications, setAdjudications] = useState<CDRLAdjudication[]>([])
+  const [isLoadingAdjudications, setIsLoadingAdjudications] = useState(false)
+  const [adjudicationError, setAdjudicationError] = useState<string | null>(null)
+  const selectedCdrl = useMemo(
+    () => cdrls.find((cdrl) => cdrl.id === selectedCdrlId) ?? null,
+    [cdrls, selectedCdrlId],
+  )
+  const selectedAdjudication = useMemo(
+    () => adjudications.find((item) => item.cdrl_id === selectedCdrlId),
+    [adjudications, selectedCdrlId],
+  )
+
+  useEffect(() => {
+    if (cdrls.length === 0) {
+      setAdjudications([])
+      setAdjudicationError(null)
+      return
+    }
+    let active = true
+    setIsLoadingAdjudications(true)
+    setAdjudicationError(null)
+    void api.listCdrlAdjudications(projectId)
+      .then((items) => { if (active) setAdjudications(items) })
+      .catch((reason: unknown) => {
+        if (active) setAdjudicationError(reason instanceof Error ? reason.message : 'Could not load CDRL readiness reviews.')
+      })
+      .finally(() => { if (active) setIsLoadingAdjudications(false) })
+    return () => { active = false }
+  }, [cdrls, projectId])
+
+  const saveAdjudication = async (
+    cdrlId: string,
+    status: CDRLAdjudicationStatus,
+    reviewer: string,
+    waiverReason: string,
+  ) => {
+    const current = adjudications.find((item) => item.cdrl_id === cdrlId)
+    const updated = await api.updateCdrlAdjudication(projectId, cdrlId, {
+      status,
+      reviewer: reviewer.trim() || null,
+      waiver_reason: status === 'WAIVED' ? waiverReason.trim() || null : null,
+      expected_updated_at: current?.updated_at || null,
+    })
+    setAdjudications((items) => {
+      const found = items.some((item) => item.cdrl_id === updated.cdrl_id)
+      return found
+        ? items.map((item) => item.cdrl_id === updated.cdrl_id ? updated : item)
+        : [...items, updated]
+    })
+    await onAdjudicationChanged?.()
+  }
+
+  const emptyTitle = isExtracting
+    ? 'Checking for CDRLs'
+    : extractionAttempted || hasRequirements
+      ? 'No CDRLs detected'
+      : 'CDRL register is empty'
+  const emptyCopy = isExtracting
+    ? 'The register will update when extraction finishes.'
+    : extractionAttempted || hasRequirements
+      ? 'Requirement extraction completed without finding a DD Form 1423 delivery record. Confirm the source package includes all exhibits and attachments.'
+      : 'Upload and process the solicitation package, then run requirement extraction to populate this register.'
+
   return (
     <section className="register cdrl-register" aria-labelledby="cdrl-register-title">
       <header className="register-hero register-hero--cdrl">
         <div>
           <div className="section-kicker">DD Form 1423</div>
           <h3 id="cdrl-register-title">Contract Data Requirements List</h3>
-          <p>Every extracted delivery record, including schedule, DID authority, Block 16 tailoring, and exact provenance.</p>
+          <p>Scan delivery items at a glance, then open the complete field inventory and exact source when needed.</p>
         </div>
         <strong>{cdrls.length}<small>records</small></strong>
       </header>
 
       {cdrls.length === 0 ? (
-        <div className="state-card register-empty">
+        <div className="state-card register-empty" aria-busy={isExtracting || undefined}>
           <div className="state-card__icon" aria-hidden="true">1423</div>
-          <strong>No CDRLs extracted</strong>
-          <p>Run requirement extraction after the source documents reach an extracted status.</p>
+          <strong>{emptyTitle}</strong>
+          <p>{emptyCopy}</p>
         </div>
       ) : (
-        <div className="cdrl-list">
-          {cdrls.map((cdrl) => {
-            const linkedRequirementId = cdrl.requirement_id || cdrl.linked_requirement_id
-            const itemNumber = cdrlValue(cdrl, 'item_number', 'data_item_number', 'block_1')
-            const title = cdrlValue(cdrl, 'title', 'data_item_title', 'block_2')
-            const did = cdrlValue(cdrl, 'did_number', 'data_acquisition_document', 'block_4')
-            const frequency = cdrlValue(cdrl, 'frequency', 'block_10')
-            const first = cdrlValue(cdrl, 'first_submission', 'first_submission_date', 'block_12')
-            const subsequent = cdrlValue(cdrl, 'subsequent_submission', 'subsequent_submission_date', 'block_13')
-            const remarks = cdrlValue(cdrl, 'remarks', 'block_16')
+        <>
+          {adjudicationError && <p className="product-error" role="alert">{adjudicationError}</p>}
+          {isLoadingAdjudications && <p className="cdrl-adjudication-loading" role="status">Loading CDRL readiness reviews…</p>}
+          <div className="cdrl-table-wrap">
+            <table className="cdrl-table">
+              <caption className="visually-hidden">Extracted contract data requirements</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Item</th>
+                  <th scope="col">Title</th>
+                  <th scope="col">DID / authority</th>
+                  <th scope="col">Frequency</th>
+                  <th scope="col">First submission</th>
+                  <th scope="col">Approval</th>
+                  <th scope="col">Completeness</th>
+                  <th scope="col">Review</th>
+                  <th scope="col"><span className="visually-hidden">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {cdrls.map((cdrl) => {
+                  const itemNumber = cdrlValue(cdrl, 'item_number', 'data_item_number', 'block_1')
+                  const title = cdrlValue(cdrl, 'title', 'data_item_title', 'block_2')
+                  const adjudication = adjudications.find((item) => item.cdrl_id === cdrl.id)
+                  return (
+                    <tr key={cdrl.id} className={selectedCdrlId === cdrl.id ? 'cdrl-table__selected' : undefined}>
+                      <th scope="row">{itemNumber}</th>
+                      <td>{title}</td>
+                      <td>{cdrlValue(cdrl, 'did_number', 'data_acquisition_document', 'block_4')}</td>
+                      <td>{cdrlValue(cdrl, 'frequency', 'block_10')}</td>
+                      <td>{cdrlValue(cdrl, 'first_submission', 'first_submission_date', 'block_12')}</td>
+                      <td>{cdrlValue(cdrl, 'block_8')}</td>
+                      <td>
+                        <span className={cdrl.incomplete ? 'cdrl-completeness cdrl-completeness--warning' : 'cdrl-completeness'}>
+                          {completeness(cdrl)}%
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`cdrl-readiness-status${adjudication?.effective_ready ? ' cdrl-readiness-status--ready' : ''}`}>
+                          {adjudicationLabel(adjudication)}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          className="button button--secondary cdrl-detail-button"
+                          type="button"
+                          aria-expanded={selectedCdrlId === cdrl.id}
+                          onClick={() => setSelectedCdrlId((current) => current === cdrl.id ? null : cdrl.id)}
+                        >
+                          {selectedCdrlId === cdrl.id ? 'Hide details' : 'View details'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {selectedCdrl && (() => {
+            const linkedRequirementId = selectedCdrl.requirement_id || selectedCdrl.linked_requirement_id
+            const itemNumber = cdrlValue(selectedCdrl, 'item_number', 'data_item_number', 'block_1')
+            const title = cdrlValue(selectedCdrl, 'title', 'data_item_title', 'block_2')
+            const remarks = cdrlValue(selectedCdrl, 'remarks', 'block_16')
             return (
-              <article className="cdrl-card" key={cdrl.id}>
+              <article className="cdrl-detail" aria-labelledby={`cdrl-detail-${selectedCdrl.id}`}>
                 <header>
                   <div>
                     <span>Data item {itemNumber}</span>
-                    <h4>{title}</h4>
+                    <h4 id={`cdrl-detail-${selectedCdrl.id}`}>{title}</h4>
                   </div>
-                  {cdrl.incomplete || (cdrl.incomplete_fields && cdrl.incomplete_fields.length > 0) ? (
-                    <span className="review-status review-status--pending">
-                      {cdrl.source_truncated
-                        ? `Source capped · ${cdrl.incomplete_fields?.length ?? 0} fields missing`
-                        : `Extraction incomplete · ${cdrl.incomplete_fields?.length ?? 0}`}
-                    </span>
-                  ) : (
-                    <span className="review-status review-status--neutral">Extraction fields captured</span>
-                  )}
-                  <span className={`review-status review-status--${cdrl.validation_status?.toLowerCase() || 'pending'}`}>
-                    {cdrl.validation_status ? `Review ${cdrl.validation_status.toLowerCase()}` : 'Needs human review'}
-                  </span>
+                  <button className="icon-button" type="button" aria-label="Close CDRL details" onClick={() => setSelectedCdrlId(null)}>×</button>
                 </header>
+
                 <dl className="cdrl-key-fields">
-                  <div><dt>DID / authority</dt><dd>{did}</dd></div>
-                  <div><dt>Frequency</dt><dd>{frequency}</dd></div>
-                  <div><dt>First submission</dt><dd>{first}</dd></div>
-                  <div><dt>Subsequent submissions</dt><dd>{subsequent}</dd></div>
+                  <div><dt>DID / authority</dt><dd>{cdrlValue(selectedCdrl, 'did_number', 'data_acquisition_document', 'block_4')}</dd></div>
+                  <div><dt>Frequency</dt><dd>{cdrlValue(selectedCdrl, 'frequency', 'block_10')}</dd></div>
+                  <div><dt>First submission</dt><dd>{cdrlValue(selectedCdrl, 'first_submission', 'first_submission_date', 'block_12')}</dd></div>
+                  <div><dt>Subsequent submissions</dt><dd>{cdrlValue(selectedCdrl, 'subsequent_submission', 'subsequent_submission_date', 'block_13')}</dd></div>
                 </dl>
+
                 <section className="block-sixteen" aria-label="Block 16 remarks">
                   <strong>Block 16 · Remarks / tailoring</strong>
                   <p>{remarks}</p>
                 </section>
-                <div className="cdrl-provenance">
-                  <span>{cdrl.document_name || 'Source document'}</span>
-                  <span>{cdrl.source_locator || 'Locator unavailable'}</span>
-                  <p>{cdrl.source_text}</p>
-                </div>
+
+                <details className="cdrl-provenance">
+                  <summary>View exact source</summary>
+                  <div>
+                    <span>{selectedCdrl.document_name || 'Source document'}</span>
+                    <span>{selectedCdrl.source_locator || 'Locator unavailable'}</span>
+                    <p>{selectedCdrl.source_text}</p>
+                  </div>
+                </details>
+
                 <details>
                   <summary>View full DD Form 1423 field inventory</summary>
                   <dl className="all-blocks">
                     {blockDefinitions.map(({ key, label }) => (
-                      <div key={key} className={cdrl[key] ? undefined : 'all-blocks__missing'}>
+                      <div key={key} className={selectedCdrl[key] ? undefined : 'all-blocks__missing'}>
                         <dt>{label}</dt>
-                        <dd>{cdrl[key] ? String(cdrl[key]) : 'Not captured'}</dd>
+                        <dd>{selectedCdrl[key] ? String(selectedCdrl[key]) : 'Not captured'}</dd>
                       </div>
                     ))}
                   </dl>
                 </details>
-                {(cdrl.incomplete_fields?.length ?? 0) > 0 && (
+
+                {(selectedCdrl.incomplete_fields?.length ?? 0) > 0 && (
                   <section className="missing-fields" aria-label="Missing CDRL fields">
                     <strong>Missing fields requiring review</strong>
                     <ul>
-                      {cdrl.incomplete_fields?.map((field) => (
+                      {selectedCdrl.incomplete_fields?.map((field) => (
                         <li key={field}>{missingFieldLabel(field)}</li>
                       ))}
                     </ul>
                   </section>
                 )}
+
+                <CdrlAdjudicationEditor
+                  cdrl={selectedCdrl}
+                  adjudication={selectedAdjudication}
+                  isLoading={isLoadingAdjudications}
+                  onSave={saveAdjudication}
+                />
+
                 {linkedRequirementId && (
                   <button
-                    className="button button--secondary cdrl-review-button"
+                    className="button button--primary cdrl-review-button"
                     id={`cdrl-review-${linkedRequirementId}`}
                     type="button"
                     onClick={() => onReviewRequirement(linkedRequirementId)}
@@ -142,9 +300,113 @@ export function CdrlRegister({ cdrls, onReviewRequirement }: CdrlRegisterProps) 
                 )}
               </article>
             )
-          })}
-        </div>
+          })()}
+        </>
       )}
+    </section>
+  )
+}
+
+function CdrlAdjudicationEditor({
+  cdrl,
+  adjudication,
+  isLoading,
+  onSave,
+}: {
+  cdrl: CDRL
+  adjudication?: CDRLAdjudication
+  isLoading: boolean
+  onSave: (
+    cdrlId: string,
+    status: CDRLAdjudicationStatus,
+    reviewer: string,
+    waiverReason: string,
+  ) => Promise<void>
+}) {
+  const [status, setStatus] = useState<CDRLAdjudicationStatus>('PENDING')
+  const [reviewer, setReviewer] = useState('')
+  const [waiverReason, setWaiverReason] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [announcement, setAnnouncement] = useState('')
+
+  useEffect(() => {
+    setStatus(adjudication?.status ?? 'PENDING')
+    setReviewer(adjudication?.reviewer ?? '')
+    setWaiverReason(adjudication?.waiver_reason ?? '')
+    setError(null)
+    setAnnouncement('')
+  }, [adjudication, cdrl.id])
+
+  const submit = async () => {
+    if (status !== 'PENDING' && !reviewer.trim()) {
+      setError('Enter a reviewer label before completing this CDRL review.')
+      return
+    }
+    if (status === 'WAIVED' && !waiverReason.trim()) {
+      setError('Explain why this CDRL completeness requirement is being waived.')
+      return
+    }
+    setError(null)
+    setAnnouncement('')
+    setIsSaving(true)
+    try {
+      await onSave(cdrl.id, status, reviewer, waiverReason)
+      setAnnouncement(status === 'PENDING' ? 'CDRL review reset to pending.' : 'CDRL readiness review saved.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save the CDRL readiness review.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const missingFields = adjudication?.missing_fields ?? cdrl.incomplete_fields ?? []
+
+  return (
+    <section className="cdrl-adjudication" aria-label="CDRL readiness review">
+      <div className="cdrl-adjudication__heading">
+        <div>
+          <strong>Readiness review</strong>
+          <p>Readiness remains blocked until a human confirms a complete record or records an explicit waiver.</p>
+        </div>
+        <span className={`cdrl-readiness-status${adjudication?.effective_ready ? ' cdrl-readiness-status--ready' : ''}`}>
+          {adjudicationLabel(adjudication)}
+        </span>
+      </div>
+
+      {adjudication && !adjudication.fresh && adjudication.status !== 'PENDING' && (
+        <p className="cdrl-adjudication__warning">The source changed after this decision. Review and save it again.</p>
+      )}
+      {missingFields.length > 0 && status === 'REVIEWED' && (
+        <p className="cdrl-adjudication__warning">This record is still incomplete. A reviewed decision will remain blocked unless the missing fields are resolved or explicitly waived.</p>
+      )}
+
+      <div className="cdrl-adjudication__form">
+        <label>
+          Decision
+          <select value={status} onChange={(event) => setStatus(event.target.value as CDRLAdjudicationStatus)} disabled={isLoading || isSaving}>
+            <option value="PENDING">Pending review</option>
+            <option value="REVIEWED">Reviewed for completeness</option>
+            <option value="WAIVED">Explicitly waived</option>
+          </select>
+        </label>
+        <label>
+          Reviewer label {status !== 'PENDING' && <span aria-hidden="true">*</span>}
+          <input value={reviewer} onChange={(event) => setReviewer(event.target.value)} disabled={isLoading || isSaving} />
+          <small>Self-reported on the anonymous public demo.</small>
+        </label>
+        {status === 'WAIVED' && (
+          <label className="cdrl-adjudication__reason">
+            Waiver reason <span aria-hidden="true">*</span>
+            <textarea rows={3} value={waiverReason} onChange={(event) => setWaiverReason(event.target.value)} disabled={isLoading || isSaving} />
+          </label>
+        )}
+      </div>
+      {error && <p className="product-error" role="alert">{error}</p>}
+      {announcement && <p className="product-success" role="status">{announcement}</p>}
+      <button className="button button--primary" type="button" disabled={isLoading || isSaving} onClick={() => void submit()}>
+        {isSaving ? 'Saving review…' : 'Save CDRL review'}
+      </button>
     </section>
   )
 }

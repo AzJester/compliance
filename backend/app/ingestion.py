@@ -14,7 +14,14 @@ from sqlalchemy.orm import Session
 
 from .config import Settings
 from .extraction import extract_document
-from .models import Blob, Document
+from .freshness import mark_crosswalk_stale, reset_package_verification
+from .models import (
+    SOLICITATION_DOCUMENT_CLASSIFICATIONS,
+    Blob,
+    Document,
+    DocumentClassification,
+    DocumentProfile,
+)
 
 MEDIA_TYPES = {
     ".pdf": "application/pdf",
@@ -360,6 +367,9 @@ def store_documents(
     project_id: str,
     prepared: list[PreparedDocument],
     settings: Settings,
+    classification: DocumentClassification = DocumentClassification.UNCLASSIFIED,
+    volume_name: str | None = None,
+    classification_notes: str | None = None,
 ) -> list[Document]:
     blobs = {
         blob.sha256: blob
@@ -410,9 +420,22 @@ def store_documents(
             )
             session.add(document)
             session.flush()
+            document.workflow_profile = DocumentProfile(
+                document_id=document.id,
+                project_id=project_id,
+                classification=classification,
+                volume_name=volume_name,
+                notes=classification_notes,
+            )
+            session.flush()
             if duplicate is None:
                 first_occurrence[item.sha256] = document
             results.append(document)
+        if results:
+            if classification == DocumentClassification.PROPOSAL_VOLUME:
+                mark_crosswalk_stale(session, project_id)
+            elif classification in SOLICITATION_DOCUMENT_CLASSIFICATIONS:
+                reset_package_verification(session, project_id)
         session.commit()
         return results
     except Exception:

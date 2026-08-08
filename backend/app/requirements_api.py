@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -9,7 +9,9 @@ from .config import Settings
 from .database import get_session
 from .models import (
     CDRL,
+    SOLICITATION_DOCUMENT_CLASSIFICATIONS,
     Document,
+    DocumentProfile,
     Project,
     Requirement,
     RequirementCategory,
@@ -45,10 +47,16 @@ def _project(session: Session, project_id: str) -> Project:
 def _requirement(session: Session, project_id: str, requirement_id: str) -> Requirement:
     requirement = session.scalar(
         select(Requirement)
+        .join(Document, Document.id == Requirement.document_id)
+        .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
         .options(selectinload(Requirement.document), selectinload(Requirement.cdrl))
         .where(
             Requirement.id == requirement_id,
             Requirement.project_id == project_id,
+            or_(
+                DocumentProfile.document_id.is_(None),
+                DocumentProfile.classification.in_(SOLICITATION_DOCUMENT_CLASSIFICATIONS),
+            ),
         )
     )
     if requirement is None:
@@ -105,8 +113,16 @@ def list_requirements(
 
     statement = (
         select(Requirement)
+        .join(Document, Document.id == Requirement.document_id)
+        .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
         .options(selectinload(Requirement.document))
-        .where(Requirement.project_id == project_id)
+        .where(
+            Requirement.project_id == project_id,
+            or_(
+                DocumentProfile.document_id.is_(None),
+                DocumentProfile.classification.in_(SOLICITATION_DOCUMENT_CLASSIFICATIONS),
+            ),
+        )
     )
     if section is not None:
         statement = statement.where(Requirement.section == section)
@@ -177,8 +193,16 @@ def list_cdrls(project_id: str, session: Session = Depends(get_session)) -> list
     _project(session, project_id)
     cdrls = session.scalars(
         select(CDRL)
+        .join(Document, Document.id == CDRL.document_id)
+        .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
         .options(selectinload(CDRL.document), selectinload(CDRL.requirement))
-        .where(CDRL.project_id == project_id)
+        .where(
+            CDRL.project_id == project_id,
+            or_(
+                DocumentProfile.document_id.is_(None),
+                DocumentProfile.classification.in_(SOLICITATION_DOCUMENT_CLASSIFICATIONS),
+            ),
+        )
         .order_by(CDRL.document_id, CDRL.source_start, CDRL.fingerprint)
     )
     return [cdrl_response(cdrl) for cdrl in cdrls]

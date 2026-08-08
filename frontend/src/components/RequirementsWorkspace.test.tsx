@@ -40,6 +40,7 @@ function deferred<T>() {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  window.sessionStorage.clear()
 })
 
 describe('RequirementsWorkspace', () => {
@@ -68,20 +69,20 @@ describe('RequirementsWorkspace', () => {
     const user = userEvent.setup()
 
     render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
-    expect(await screen.findByRole('heading', { name: 'All requirements' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /extract requirements/i }))
+    expect(await screen.findByRole('heading', { name: 'Requirement review queue' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /find requirements/i }))
 
     const result = await screen.findByRole('region', { name: /extraction complete/i })
     expect(within(result).getByText('3 documents analyzed')).toBeInTheDocument()
-    expect(within(result).getByText('Requirements created').nextElementSibling).toHaveTextContent('2')
-    expect(within(result).getByText('Requirements reused').nextElementSibling).toHaveTextContent('4')
-    expect(within(result).getByText('CDRLs created').nextElementSibling).toHaveTextContent('1')
-    expect(within(result).getByText('CDRLs reused').nextElementSibling).toHaveTextContent('2')
+    expect(within(result).getByText('New requirements').nextElementSibling).toHaveTextContent('2')
+    expect(within(result).getByText('Existing requirements').nextElementSibling).toHaveTextContent('4')
+    expect(within(result).getByText('New CDRLs').nextElementSibling).toHaveTextContent('1')
+    expect(within(result).getByText('Existing CDRLs').nextElementSibling).toHaveTextContent('2')
     expect(within(result).getByText('Total requirements').nextElementSibling).toHaveTextContent('6')
     expect(within(result).getByText('Pending review').nextElementSibling).toHaveTextContent('5')
     expect(screen.getByText(requirement().requirement_text)).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Extraction complete: 2 requirements and 1 CDRL records created.',
+      'Extraction complete. 2 requirement candidates and 1 CDRL records were created.',
     )
   })
 
@@ -101,14 +102,14 @@ describe('RequirementsWorkspace', () => {
     }))
 
     const { rerender } = render(<RequirementsWorkspace projectId="project-1" view="section-l" />)
-    expect(await screen.findByRole('heading', { name: /section l submission register/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /section l proposal instructions/i })).toBeInTheDocument()
     expect(screen.getByText(sectionL.requirement_text)).toBeInTheDocument()
     expect(screen.queryByText(sectionM.requirement_text)).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: new RegExp(sectionL.requirement_text, 'i') }))
     expect(await screen.findByRole('heading', { name: /review requirement/i })).toBeInTheDocument()
 
     rerender(<RequirementsWorkspace projectId="project-1" view="section-m" />)
-    expect(await screen.findByRole('heading', { name: /section m evaluation register/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /section m evaluation criteria/i })).toBeInTheDocument()
     expect(screen.getByText(sectionM.requirement_text)).toBeInTheDocument()
     expect(screen.queryByText(sectionL.requirement_text)).not.toBeInTheDocument()
     await waitFor(() => {
@@ -139,8 +140,8 @@ describe('RequirementsWorkspace', () => {
 
     const { rerender } = render(<RequirementsWorkspace projectId="project-1" view="section-l" />)
     await user.click(await screen.findByRole('button', { name: /submit a signed cover letter/i }))
-    await user.type(screen.getByLabelText(/^reviewer$/i), 'First Reviewer')
-    await user.click(screen.getByRole('button', { name: /^validate$/i }))
+    await user.type(screen.getByLabelText(/reviewer/i), 'First Reviewer')
+    await user.click(screen.getByRole('button', { name: /^verify$/i }))
 
     rerender(<RequirementsWorkspace projectId="project-1" view="section-m" />)
     await user.click(await screen.findByRole('button', { name: /technical approach is more important/i }))
@@ -155,7 +156,7 @@ describe('RequirementsWorkspace', () => {
       }))
     })
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^validate$/i })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /^verify$/i })).toBeEnabled()
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -188,13 +189,13 @@ describe('RequirementsWorkspace', () => {
 
     render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
     await user.click(await screen.findByRole('button', { name: /offeror shall provide a staffing plan/i }))
-    await user.type(screen.getByLabelText(/^reviewer$/i), 'Stale Reviewer')
-    await user.click(screen.getByRole('button', { name: /^validate$/i }))
+    await user.type(screen.getByLabelText(/reviewer/i), 'Stale Reviewer')
+    await user.click(screen.getByRole('button', { name: /^verify$/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/refresh and review the latest version/i)
     expect(requirementReads).toBe(2)
-    expect(screen.getByLabelText(/normalized requirement/i)).toHaveValue(current.requirement_text)
-    expect(screen.getByLabelText(/^reviewer$/i)).toHaveValue('Other Reviewer')
+    expect(screen.getByLabelText(/requirement text/i)).toHaveValue(current.requirement_text)
+    expect(screen.getByLabelText(/reviewer/i)).toHaveValue('Other Reviewer')
   })
 
   it('renders hostile solicitation content only as inert text', async () => {
@@ -261,9 +262,10 @@ describe('RequirementsWorkspace', () => {
     const user = userEvent.setup()
 
     render(<RequirementsWorkspace projectId="project-1" view="cdrls" />)
+    await user.click(await screen.findByRole('button', { name: /view details/i }))
     const blockSixteen = await screen.findByRole('region', { name: /block 16 remarks/i })
     expect(within(blockSixteen).getByText(cdrl.block_16!)).toBeInTheDocument()
-    expect(screen.getByText(/source capped · 1 fields missing/i)).toBeInTheDocument()
+    expect(screen.getByText('29%')).toBeInTheDocument()
     const inventorySummary = screen.getByText(/view full DD Form 1423 field inventory/i)
     expect(inventorySummary).toBeInTheDocument()
     expect(inventorySummary.closest('details')?.querySelectorAll('dt')).toHaveLength(24)
@@ -278,11 +280,11 @@ describe('RequirementsWorkspace', () => {
     })
     expect(screen.getAllByText(linked.source_text).length).toBeGreaterThan(0)
     expect(await screen.findByText('Reviewed against the exact solicitation source.')).toBeInTheDocument()
-    expect(screen.getByText('VALIDATED')).toBeInTheDocument()
+    expect(screen.getAllByText('Verified').length).toBeGreaterThan(0)
     expect(screen.getByText(/view recorded before and after state/i)).toBeInTheDocument()
-    await user.type(screen.getByLabelText(/^reviewer$/i), 'Dana Reviewer')
-    await user.click(screen.getByRole('button', { name: /^validate$/i }))
-    expect(await screen.findByText('Review validated')).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/^reviewer\s*\*?$/i), 'Dana Reviewer')
+    await user.click(screen.getByRole('button', { name: /^verify$/i }))
+    expect(await screen.findByText(/requirement review saved as verified/i)).toBeInTheDocument()
   })
 
   it('requires reviewer identity and a dismissal reason when adjudicating', async () => {
@@ -305,19 +307,20 @@ describe('RequirementsWorkspace', () => {
 
     render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
     await user.click(await screen.findByText(current.requirement_text))
-    await user.click(screen.getByRole('button', { name: /save changes/i }))
-    expect(screen.getByRole('alert')).toHaveTextContent(/reviewer name is required to save any review decision/i)
+    await user.click(screen.getByRole('button', { name: /save draft/i }))
+    expect(screen.getByText(/reviewer name is required/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/correct the highlighted fields/i)
     expect(patchBodies).toHaveLength(0)
 
-    await user.type(screen.getByLabelText(/^reviewer$/i), 'Alex Reviewer')
-    await user.click(screen.getByRole('button', { name: /^validate$/i }))
+    await user.type(screen.getByLabelText(/reviewer/i), 'Alex Reviewer')
+    await user.click(screen.getByRole('button', { name: /^verify$/i }))
     await waitFor(() => expect(patchBodies).toHaveLength(1))
     expect(patchBodies[0]).toMatchObject({ validation_status: 'VALIDATED', reviewer: 'Alex Reviewer' })
 
-    await user.click(screen.getByRole('button', { name: /^dismiss$/i }))
-    expect(screen.getByRole('alert')).toHaveTextContent(/dismissal reason is required/i)
-    await user.type(screen.getByRole('textbox', { name: /dismissal reason/i }), 'Not an offeror obligation.')
-    await user.click(screen.getByRole('button', { name: /^dismiss$/i }))
+    await user.click(screen.getByRole('button', { name: /^not a requirement$/i }))
+    expect(screen.getByText(/explain why this is not a requirement/i)).toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: /why is this not a requirement/i }), 'Not an offeror obligation.')
+    await user.click(screen.getByRole('button', { name: /confirm not a requirement/i }))
     await waitFor(() => expect(patchBodies).toHaveLength(2))
     expect(patchBodies[1]).toMatchObject({
       validation_status: 'DISMISSED',
@@ -348,5 +351,127 @@ describe('RequirementsWorkspace', () => {
     expect(screen.queryByText(alpha.requirement_text)).not.toBeInTheDocument()
     expect(screen.getByText(bravo.requirement_text)).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/project-bravo/requirements'))).toBe(true)
+  })
+
+  it('opens on the pending queue and applies summary and clear-filter actions', async () => {
+    const pending = requirement({ id: 'req-pending', requirement_text: 'Pending candidate' })
+    const verified = requirement({
+      id: 'req-verified',
+      requirement_text: 'Verified candidate',
+      validation_status: 'VALIDATED',
+    })
+    const dismissed = requirement({
+      id: 'req-dismissed',
+      requirement_text: 'Non-requirement candidate',
+      validation_status: 'DISMISSED',
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/requirements')) return jsonResponse([pending, verified, dismissed])
+      if (url.endsWith('/cdrls')) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+    const user = userEvent.setup()
+
+    render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
+    expect(await screen.findByText(pending.requirement_text)).toBeInTheDocument()
+    expect(screen.queryByText(verified.requirement_text)).not.toBeInTheDocument()
+
+    const summary = screen.getByRole('region', { name: /requirement review summary/i })
+    await user.click(within(summary).getByRole('button', { name: /verified/i }))
+    expect(await screen.findByText(verified.requirement_text)).toBeInTheDocument()
+    expect(screen.queryByText(pending.requirement_text)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /clear filters/i }))
+    expect(screen.getByText(pending.requirement_text)).toBeInTheDocument()
+    expect(screen.getByText(verified.requirement_text)).toBeInTheDocument()
+    expect(screen.getByText(dismissed.requirement_text)).toBeInTheDocument()
+  })
+
+  it('paginates, sorts, and moves through the filtered review queue', async () => {
+    const candidates = Array.from({ length: 12 }, (_, index) => requirement({
+      id: `req-${index + 1}`,
+      requirement_text: `Requirement candidate ${String(index + 1).padStart(2, '0')}`,
+      source_text: `Source for candidate ${index + 1}`,
+      confidence: (index + 1) / 12,
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/requirements')) return jsonResponse(candidates)
+      if (url.endsWith('/cdrls')) return jsonResponse([])
+      if (url.endsWith('/reviews')) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+    const user = userEvent.setup()
+
+    render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
+    expect(await screen.findByText('Requirement candidate 01')).toBeInTheDocument()
+    expect(screen.queryByText('Requirement candidate 11')).not.toBeInTheDocument()
+    expect(screen.getByText('Showing 1–10 of 12')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /next page/i }))
+    expect(await screen.findByText('Requirement candidate 11')).toBeInTheDocument()
+    expect(screen.getByText('Showing 11–12 of 12')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /previous page/i }))
+    await user.selectOptions(screen.getByLabelText(/sort/i), 'CONFIDENCE')
+    const firstCard = document.querySelector('.requirement-card strong')
+    expect(firstCard).toHaveTextContent('Requirement candidate 12')
+
+    await user.click(screen.getByRole('button', { name: /requirement candidate 12/i }))
+    expect(await screen.findByText(/requirement 1 of 12 in this queue/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^next →$/i }))
+    expect(screen.getByLabelText(/requirement text/i)).toHaveValue('Requirement candidate 11')
+  })
+
+  it('protects unsaved edits when closing or selecting another requirement', async () => {
+    const first = requirement({ id: 'req-first', requirement_text: 'First candidate' })
+    const second = requirement({ id: 'req-second', requirement_text: 'Second candidate' })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/requirements')) return jsonResponse([first, second])
+      if (url.endsWith('/cdrls')) return jsonResponse([])
+      if (url.endsWith('/reviews')) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    const user = userEvent.setup()
+
+    render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
+    await user.click(await screen.findByRole('button', { name: /first candidate/i }))
+    const editor = screen.getByLabelText(/requirement text/i)
+    await user.type(editor, ' edited')
+    await user.click(screen.getByRole('button', { name: /second candidate/i }))
+    expect(confirm).toHaveBeenCalledWith('Discard your unsaved review changes?')
+    expect(editor).toHaveValue('First candidate edited')
+
+    confirm.mockReturnValue(true)
+    await user.click(screen.getByRole('button', { name: /second candidate/i }))
+    expect(screen.getByLabelText(/requirement text/i)).toHaveValue('Second candidate')
+  })
+
+  it('collapses duplicate source evidence and explains a CDRL-free extraction result', async () => {
+    const duplicate = requirement({
+      requirement_text: 'Submit the staffing plan.',
+      source_text: 'Submit the staffing plan.',
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/requirements')) return jsonResponse([duplicate])
+      if (url.endsWith('/cdrls')) return jsonResponse([])
+      if (url.endsWith('/reviews')) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+    const user = userEvent.setup()
+
+    const { rerender } = render(<RequirementsWorkspace projectId="project-1" view="requirements" />)
+    await user.click(await screen.findByRole('button', { name: /submit the staffing plan/i }))
+    const sourceDetails = screen.getByText('Source excerpt').closest('details')
+    expect(sourceDetails).not.toHaveAttribute('open')
+
+    rerender(<RequirementsWorkspace projectId="project-1" view="cdrls" />)
+    expect(await screen.findByText('No CDRLs detected')).toBeInTheDocument()
+    expect(screen.getByText(/without finding a DD Form 1423 delivery record/i)).toBeInTheDocument()
   })
 })

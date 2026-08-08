@@ -7,7 +7,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import (
+    ActionStatus,
+    CDRLAdjudicationStatus,
+    CrosswalkStatus,
+    DocumentClassification,
     DocumentStatus,
+    IntakeVerificationStatus,
     ObligationOwner,
     RequirementApplicability,
     RequirementCategory,
@@ -15,6 +20,8 @@ from .models import (
     ReviewAction,
     Sensitivity,
     ValidationStatus,
+    WorkflowStage,
+    WorkflowStatus,
 )
 
 
@@ -74,6 +81,42 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
 
 
+class ProjectPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=250)
+    solicitation_number: str | None = Field(default=None, max_length=150)
+    agency: str | None = Field(default=None, max_length=250)
+    due_at: datetime | None = None
+    due_timezone: str | None = Field(default=None, max_length=100)
+
+    @field_validator("due_at")
+    @classmethod
+    def require_patch_offset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("due_at must include a UTC offset")
+        return value
+
+    @field_validator("due_timezone")
+    @classmethod
+    def validate_patch_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise ValueError("due_timezone must be a valid IANA timezone") from None
+        return value
+
+    @model_validator(mode="after")
+    def require_patch_field(self) -> ProjectPatch:
+        if not self.model_fields_set:
+            raise ValueError("At least one project field is required")
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("name cannot be null")
+        return self
+
+
 class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -88,6 +131,9 @@ class DocumentResponse(BaseModel):
     source_archive: str | None
     duplicate_of: str | None
     error: str | None
+    classification: DocumentClassification
+    volume_name: str | None
+    classification_notes: str | None
     created_at: datetime
 
 
@@ -240,3 +286,356 @@ class CDRLResponse(BaseModel):
     block_18: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class CDRLAdjudicationPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    status: CDRLAdjudicationStatus
+    reviewer: str | None = Field(default=None, max_length=150)
+    waiver_reason: str | None = Field(default=None, max_length=2_000)
+    expected_updated_at: datetime | None = None
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def require_cdrl_expected_offset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("expected_updated_at must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def validate_adjudication(self) -> CDRLAdjudicationPatch:
+        if (
+            self.status
+            in {
+                CDRLAdjudicationStatus.REVIEWED,
+                CDRLAdjudicationStatus.WAIVED,
+            }
+            and not self.reviewer
+        ):
+            raise ValueError("reviewer is required for CDRL adjudication")
+        if self.status == CDRLAdjudicationStatus.WAIVED and not self.waiver_reason:
+            raise ValueError("waiver_reason is required to waive a CDRL issue")
+        return self
+
+
+class CDRLAdjudicationResponse(BaseModel):
+    cdrl_id: str
+    project_id: str
+    status: CDRLAdjudicationStatus
+    reviewer: str | None
+    waiver_reason: str | None
+    reviewed_at: datetime | None
+    updated_at: datetime | None
+    source_fingerprint: str | None
+    fresh: bool
+    context_only: bool
+    incomplete: bool
+    missing_fields: list[str]
+    effective_ready: bool
+
+
+class WorkflowResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_id: str
+    stage: WorkflowStage
+    status: WorkflowStatus
+    blocker_summary: str | None
+    updated_at: datetime
+
+
+class WorkflowPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    stage: WorkflowStage | None = None
+    status: WorkflowStatus | None = None
+    blocker_summary: str | None = Field(default=None, max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_workflow_patch(self) -> WorkflowPatch:
+        if not self.model_fields_set:
+            raise ValueError("At least one workflow field is required")
+        required = {"stage", "status"}.intersection(self.model_fields_set)
+        null_fields = sorted(field for field in required if getattr(self, field) is None)
+        if null_fields:
+            raise ValueError(f"Workflow fields cannot be null: {', '.join(null_fields)}")
+        if self.status == WorkflowStatus.BLOCKED and not self.blocker_summary:
+            raise ValueError("blocker_summary is required when workflow status is BLOCKED")
+        return self
+
+
+class DocumentProfilePatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    classification: DocumentClassification
+    volume_name: str | None = Field(default=None, max_length=250)
+    classification_notes: str | None = Field(default=None, max_length=2_000)
+
+    @model_validator(mode="after")
+    def require_proposal_volume_name(self) -> DocumentProfilePatch:
+        if self.classification == DocumentClassification.PROPOSAL_VOLUME and not self.volume_name:
+            raise ValueError("volume_name is required for a proposal volume")
+        return self
+
+
+class DocumentTextResponse(BaseModel):
+    document_id: str
+    name: str
+    total_characters: int = Field(ge=0)
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    text: str
+    truncated: bool
+
+
+class IntakeVerificationCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    document_id: str | None = Field(default=None, max_length=36)
+    check_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$", min_length=1, max_length=100)
+    label: str = Field(min_length=1, max_length=250)
+    status: IntakeVerificationStatus = IntakeVerificationStatus.PENDING
+    reviewer: str | None = Field(default=None, max_length=150)
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class IntakeVerificationPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    label: str | None = Field(default=None, min_length=1, max_length=250)
+    status: IntakeVerificationStatus | None = None
+    reviewer: str | None = Field(default=None, max_length=150)
+    note: str | None = Field(default=None, max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_intake_patch(self) -> IntakeVerificationPatch:
+        if not self.model_fields_set:
+            raise ValueError("At least one verification field is required")
+        required = {"label", "status"}.intersection(self.model_fields_set)
+        null_fields = sorted(field for field in required if getattr(self, field) is None)
+        if null_fields:
+            raise ValueError(f"Verification fields cannot be null: {', '.join(null_fields)}")
+        return self
+
+
+class IntakeVerificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    document_id: str | None
+    check_key: str
+    label: str
+    status: IntakeVerificationStatus
+    reviewer: str | None
+    note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProposalEvidenceCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    document_id: str = Field(min_length=1, max_length=36)
+    source_start: int = Field(ge=0)
+    source_end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_evidence_range(self) -> ProposalEvidenceCreate:
+        if self.source_end <= self.source_start:
+            raise ValueError("source_end must be greater than source_start")
+        if self.source_end - self.source_start > 8_000:
+            raise ValueError("Manual evidence cannot exceed 8,000 characters")
+        return self
+
+
+class ProposalEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    finding_id: str
+    document_id: str
+    document_name: str
+    source_start: int
+    source_end: int
+    source_locator: str
+    excerpt: str
+    score: float
+    is_manual: bool
+    created_at: datetime
+
+
+class CrosswalkFindingPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    status: CrosswalkStatus | None = None
+    human_verified: bool | None = None
+    reviewer: str | None = Field(default=None, max_length=150)
+    owner: str | None = Field(default=None, max_length=150)
+    due_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=4_000)
+    expected_updated_at: datetime | None = None
+
+    @field_validator("due_at")
+    @classmethod
+    def require_finding_due_offset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("due_at must include a UTC offset")
+        return value
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def require_finding_expected_offset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("expected_updated_at must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def validate_finding_patch(self) -> CrosswalkFindingPatch:
+        if not self.model_fields_set:
+            raise ValueError("At least one crosswalk field is required")
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("status cannot be null")
+        if self.human_verified is True and not self.reviewer:
+            raise ValueError("reviewer is required for human verification")
+        return self
+
+
+class CrosswalkFindingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    requirement_id: str
+    requirement_text: str
+    requirement_section: RequirementSection
+    candidate_status: CrosswalkStatus
+    status: CrosswalkStatus
+    score: float
+    human_verified: bool
+    reviewer: str | None
+    reviewed_at: datetime | None
+    owner: str | None
+    due_at: datetime | None
+    notes: str | None
+    stale: bool
+    generated_at: datetime
+    updated_at: datetime
+    evidence: list[ProposalEvidenceResponse]
+
+
+class CrosswalkGenerateSummary(BaseModel):
+    requirements_analyzed: int = Field(ge=0)
+    proposal_documents_analyzed: int = Field(ge=0)
+    findings_created: int = Field(ge=0)
+    findings_updated: int = Field(ge=0)
+    verified_findings_marked_stale: int = Field(ge=0)
+
+
+class ProjectActionCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    title: str = Field(min_length=1, max_length=250)
+    description: str | None = Field(default=None, max_length=4_000)
+    status: ActionStatus = ActionStatus.TODO
+    owner: str | None = Field(default=None, max_length=150)
+    due_at: datetime | None = None
+    requirement_id: str | None = Field(default=None, max_length=36)
+    finding_id: str | None = Field(default=None, max_length=36)
+
+    @field_validator("due_at")
+    @classmethod
+    def require_action_due_offset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("due_at must include a UTC offset")
+        return value
+
+
+class ProjectActionPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=250)
+    description: str | None = Field(default=None, max_length=4_000)
+    status: ActionStatus | None = None
+    owner: str | None = Field(default=None, max_length=150)
+    due_at: datetime | None = None
+
+    @field_validator("due_at")
+    @classmethod
+    def require_action_patch_due_offset(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("due_at must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def validate_action_patch(self) -> ProjectActionPatch:
+        if not self.model_fields_set:
+            raise ValueError("At least one action field is required")
+        required = {"title", "status"}.intersection(self.model_fields_set)
+        null_fields = sorted(field for field in required if getattr(self, field) is None)
+        if null_fields:
+            raise ValueError(f"Action fields cannot be null: {', '.join(null_fields)}")
+        return self
+
+
+class ProjectActionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    title: str
+    description: str | None
+    status: ActionStatus
+    owner: str | None
+    due_at: datetime | None
+    requirement_id: str | None
+    finding_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class StageProgressResponse(BaseModel):
+    stage: WorkflowStage
+    label: str
+    status: WorkflowStatus
+    completed_items: int = Field(ge=0)
+    total_items: int = Field(ge=0)
+    blocking_reasons: list[str]
+    next_action: str | None
+
+
+class ReadinessResponse(BaseModel):
+    project_id: str
+    ready: bool
+    readiness_percent: int = Field(ge=0, le=100)
+    workflow_stage: WorkflowStage
+    workflow_status: WorkflowStatus
+    documents_total: int = Field(ge=0)
+    documents_classified: int = Field(ge=0)
+    proposal_documents: int = Field(ge=0)
+    intake_total: int = Field(ge=0)
+    intake_verified: int = Field(ge=0)
+    intake_issues: int = Field(ge=0)
+    requirements_total: int = Field(ge=0)
+    requirements_validated: int = Field(ge=0)
+    requirements_pending: int = Field(ge=0)
+    cdrls_total: int = Field(ge=0)
+    cdrls_ready: int = Field(ge=0)
+    cdrls_incomplete: int = Field(ge=0)
+    cdrls_unreviewed: int = Field(ge=0)
+    cdrls_waived: int = Field(ge=0)
+    cdrls_stale: int = Field(ge=0)
+    crosswalk_total: int = Field(ge=0)
+    crosswalk_verified: int = Field(ge=0)
+    covered: int = Field(ge=0)
+    partial: int = Field(ge=0)
+    missing: int = Field(ge=0)
+    conflict: int = Field(ge=0)
+    n_a: int = Field(ge=0)
+    unverified: int = Field(ge=0)
+    actions_open: int = Field(ge=0)
+    actions_blocked: int = Field(ge=0)
+    blocking_reasons: list[str]
+    next_action: str | None
+    stages: list[StageProgressResponse]

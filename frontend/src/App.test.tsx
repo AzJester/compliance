@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import type { Project, ProjectDocument } from './types'
@@ -10,7 +10,7 @@ const project: Project = {
   solicitation_number: 'FA0000-26-R-0001',
   agency: 'Department of the Air Force',
   due_at: '2026-09-15T19:00:00Z',
-  sensitivity: 'CUI',
+  sensitivity: 'PUBLIC',
   created_at: '2026-08-07T20:00:00Z',
   updated_at: '2026-08-07T20:00:00Z',
 }
@@ -35,37 +35,122 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+async function createProjectThroughWizard(
+  user: UserEvent,
+  options: { dueAt?: string } = {},
+) {
+  await user.click(screen.getByRole('button', { name: /^new project$/i }))
+  expect(screen.getByRole('dialog', { name: /create a project/i })).toBeInTheDocument()
+  await user.type(screen.getByLabelText(/project name/i), project.name)
+  await user.type(screen.getByLabelText(/solicitation number/i), project.solicitation_number!)
+  await user.type(screen.getByLabelText(/agency or customer/i), project.agency!)
+  await user.click(screen.getByRole('button', { name: /^continue$/i }))
+  if (options.dueAt) {
+    fireEvent.change(screen.getByLabelText(/proposal due date/i), {
+      target: { value: options.dueAt },
+    })
+    expect(screen.getByText((content) => (
+      content.includes(options.dueAt!.replace('T', ' '))
+      && content.includes(Intl.DateTimeFormat().resolvedOptions().timeZone)
+    ))).toBeInTheDocument()
+  }
+  await user.click(screen.getByRole('checkbox', {
+    name: /I will use only synthetic PUBLIC data.*every visitor can view or change/i,
+  }))
+  await user.click(screen.getByRole('button', { name: /^create project$/i }))
+}
+
+async function openSolicitationFiles(user: UserEvent) {
+  await user.click(screen.getByRole('button', { name: /^Files /i }))
+  expect(screen.getByRole('heading', { name: /import documents/i })).toBeInTheDocument()
+}
+
+function documentUploadInput() {
+  const input = document.getElementById('document-upload-input')
+  if (!(input instanceof HTMLInputElement)) throw new Error('Document upload input is missing.')
+  return input
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
+  window.history.replaceState(null, '', '/')
+  window.sessionStorage.clear()
 })
 
 describe('App', () => {
-  it('supports arrow, Home, and End navigation across workspace tabs', async () => {
+  it('provides keyboard navigation across the guided workflow and keeps the URL in sync', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/health') return jsonResponse({ status: 'ok' })
       if (url === '/api/projects') return jsonResponse([project])
       if (url === `/api/projects/${project.id}`) return jsonResponse(project)
       if (url === `/api/projects/${project.id}/documents`) return jsonResponse([])
-      if (url === `/api/projects/${project.id}/requirements`) return jsonResponse([])
-      if (url === `/api/projects/${project.id}/cdrls`) return jsonResponse([])
       return jsonResponse({ detail: 'Not found' }, 404)
     }))
     const user = userEvent.setup()
 
     render(<App />)
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
-    const documentsTab = screen.getByRole('tab', { name: 'Documents' })
-    documentsTab.focus()
+    const setupStage = screen.getByRole('button', { name: /^Setup /i })
+    setupStage.focus()
     await user.keyboard('{ArrowRight}')
-    expect(screen.getByRole('tab', { name: 'All Requirements' })).toHaveFocus()
-    expect(screen.getByRole('tab', { name: 'All Requirements' })).toHaveAttribute('aria-selected', 'true')
+    const filesStage = screen.getByRole('button', { name: /^Files /i })
+    expect(filesStage).toHaveFocus()
+    expect(filesStage).toHaveAttribute('aria-current', 'step')
+    expect(window.location.search).toContain('stage=solicitation-files')
 
     await user.keyboard('{End}')
-    expect(screen.getByRole('tab', { name: 'CDRLs' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: /^Reports /i })).toHaveFocus()
+    expect(screen.getByRole('heading', { name: /readiness and unresolved gaps/i })).toBeInTheDocument()
     await user.keyboard('{Home}')
-    expect(documentsTab).toHaveFocus()
-    expect(documentsTab).toHaveAttribute('aria-selected', 'true')
+    expect(setupStage).toHaveFocus()
+    expect(setupStage).toHaveAttribute('aria-current', 'step')
+
+    await user.click(screen.getByRole('link', { name: /skip to workspace/i }))
+    expect(screen.getByRole('main')).toHaveFocus()
+  })
+
+  it('opens a project and workflow stage from URL state', async () => {
+    window.history.replaceState(null, '', '/?project=project-2&stage=reports')
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/health') return jsonResponse({ status: 'ok' })
+      if (url === '/api/projects') return jsonResponse([project, secondProject])
+      if (url === `/api/projects/${secondProject.id}`) return jsonResponse(secondProject)
+      if (url === `/api/projects/${secondProject.id}/documents`) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { level: 1, name: secondProject.name })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Reports /i })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByRole('heading', { name: /readiness and unresolved gaps/i })).toBeInTheDocument()
+  })
+
+  it('filters the project switcher and exposes plain-language help', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/health') return jsonResponse({ status: 'ok' })
+      if (url === '/api/projects') return jsonResponse([project, secondProject])
+      if (url === `/api/projects/${project.id}`) return jsonResponse(project)
+      if (url === `/api/projects/${project.id}/documents`) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+    await user.type(screen.getByRole('searchbox', { name: /search projects/i }), 'Bravo')
+    expect(screen.queryByRole('button', { name: new RegExp(project.name, 'i') })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: new RegExp(secondProject.name, 'i') })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^help$/i }))
+    const help = screen.getByRole('dialog', { name: /help and glossary/i })
+    expect(help).toHaveTextContent(/requirement candidate/i)
+    expect(help).toHaveTextContent(/section L/i)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: /help and glossary/i })).not.toBeInTheDocument()
   })
 
   it('shows a recoverable error when a selected project cannot be loaded', async () => {
@@ -95,7 +180,7 @@ describe('App', () => {
     expect(projectReads).toBe(2)
   })
 
-  it('creates a project and opens its workspace', async () => {
+  it('creates a project with the two-step PUBLIC-data wizard', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
@@ -112,24 +197,9 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByText('No projects yet')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Application service online')
-    expect(screen.getByLabelText(/data security notice/i)).toHaveTextContent(
-      'PUBLIC-data boundary',
-    )
-    expect(screen.getByText(/use synthetic PUBLIC data only/i)).toHaveTextContent(
-      /do not import CUI, ITAR-controlled, classified, source-selection, or proprietary proposal data/i,
-    )
-    const sensitivity = screen.getByLabelText(/sensitivity/i)
-    expect(sensitivity).toHaveValue('PUBLIC')
-    expect(within(sensitivity).getByRole('option', { name: /CUI \(not enabled/i })).toBeDisabled()
-    expect(within(sensitivity).getByRole('option', { name: /ITAR \(not enabled/i })).toBeDisabled()
-    await user.type(screen.getByLabelText(/project name/i), project.name)
-    await user.type(screen.getByLabelText(/solicitation number/i), project.solicitation_number!)
-    await user.type(screen.getByLabelText(/^agency$/i), project.agency!)
-    fireEvent.change(screen.getByLabelText(/proposal due date/i), {
-      target: { value: '2026-09-15T12:00' },
-    })
-    await user.click(screen.getByRole('button', { name: /create project/i }))
+    expect(screen.getByRole('status')).toHaveTextContent('Service online')
+    expect(screen.getByLabelText(/data security notice/i)).toHaveTextContent('PUBLIC-data boundary')
+    await createProjectThroughWizard(user, { dueAt: '2026-09-15T12:00' })
 
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
     const createCall = fetchMock.mock.calls.find(
@@ -145,6 +215,8 @@ describe('App', () => {
       due_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
     expect(createBody.due_at).toBe(new Date('2026-09-15T12:00').toISOString())
+    expect(window.location.search).toContain('project=project-1')
+    expect(window.location.search).toContain('stage=setup')
   })
 
   it('warns anonymous visitors and requires PUBLIC-data acknowledgement before upload', async () => {
@@ -160,15 +232,11 @@ describe('App', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
-      if (url === '/api/health') {
-        return jsonResponse({ status: 'ok', access_mode: 'anonymous' })
-      }
+      if (url === '/api/health') return jsonResponse({ status: 'ok', access_mode: 'anonymous' })
       if (url === '/api/projects' && method === 'GET') return jsonResponse([])
       if (url === '/api/projects' && method === 'POST') return jsonResponse(project, 201)
       if (url === `/api/projects/${project.id}`) return jsonResponse(project)
-      if (url === `/api/projects/${project.id}/documents` && method === 'POST') {
-        return jsonResponse([uploaded], 201)
-      }
+      if (url === `/api/projects/${project.id}/documents` && method === 'POST') return jsonResponse([uploaded], 201)
       if (url === `/api/projects/${project.id}/documents`) return jsonResponse([])
       return jsonResponse({ detail: 'Not found' }, 404)
     })
@@ -177,24 +245,21 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: /build a shared compliance record/i }))
-      .toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /build a shared compliance record/i })).toBeInTheDocument()
     const warning = screen.getByLabelText(/shared public demo warning/i)
-    expect(warning).toHaveTextContent(/shared public demo.*no private workspace/i)
-    expect(warning).toHaveTextContent(/anyone can view or change all projects and uploads/i)
+    expect(warning).toHaveTextContent(/public demo: anyone can view or change data/i)
     expect(warning).toHaveTextContent(/synthetic PUBLIC data only/i)
-    expect(warning).toHaveTextContent(/content is retained on shared storage/i)
-    expect(warning).toHaveTextContent(/no privacy, identity, or audit assurance/i)
-    expect(warning).toHaveTextContent(/anonymous access/i)
-    expect(screen.queryByText(/upload securely|opening secure workspace|protected project workspace/i))
-      .not.toBeInTheDocument()
+    expect(warning).toHaveTextContent(/retained on shared storage/i)
+    expect(warning).toHaveTextContent(/no private workspace.*user identity.*authorization.*audit assurance/i)
+    expect(warning).toHaveTextContent(/anonymous/i)
+    expect(screen.queryByText(/upload securely|opening secure workspace|protected project workspace/i)).not.toBeInTheDocument()
 
-    await user.type(screen.getByLabelText(/project name/i), project.name)
-    await user.click(screen.getByRole('button', { name: /create project/i }))
+    await createProjectThroughWizard(user)
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+    await openSolicitationFiles(user)
 
     const file = new File(['synthetic data'], uploaded.name, { type: uploaded.content_type! })
-    await user.upload(screen.getByLabelText(/choose documents/i), file)
+    await user.upload(documentUploadInput(), file)
     const uploadButton = screen.getByRole('button', { name: /upload 1 file to shared storage/i })
     expect(uploadButton).toBeDisabled()
     expect(fetchMock.mock.calls.some(
@@ -250,14 +315,15 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+    await openSolicitationFiles(user)
     const file = new File(['rfp content'], uploaded.name, { type: uploaded.content_type! })
-    await user.upload(screen.getByLabelText(/choose documents/i), file)
+    await user.upload(documentUploadInput(), file)
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
 
     const table = await screen.findByRole('table')
     expect(within(table).getByText(uploaded.name)).toBeInTheDocument()
-    expect(within(table).getByText('0123456789ab')).toBeInTheDocument()
+    expect(within(table).getByTitle(uploaded.sha256)).toHaveAttribute('title', uploaded.sha256)
     expect(within(table).getByText('Stored')).toBeInTheDocument()
     expect(screen.getByText(/1 file was added to the manifest/i)).toBeInTheDocument()
 
@@ -301,11 +367,9 @@ describe('App', () => {
 
     render(<App />)
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+    await openSolicitationFiles(user)
 
-    await user.upload(
-      screen.getByLabelText(/choose documents/i),
-      new File(['alpha'], staleDocument.name, { type: 'application/pdf' }),
-    )
+    await user.upload(documentUploadInput(), new File(['alpha'], staleDocument.name, { type: 'application/pdf' }))
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       `/api/projects/${project.id}/documents`,
@@ -314,18 +378,17 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: new RegExp(secondProject.name, 'i') }))
     expect(screen.queryByRole('heading', { level: 1, name: project.name })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText(/choose documents/i)).not.toBeInTheDocument()
+    expect(document.getElementById('document-upload-input')).not.toBeInTheDocument()
 
     await act(async () => {
       nextProject.resolve(jsonResponse(secondProject))
       nextDocuments.resolve(jsonResponse([bravoDocument]))
     })
     expect(await screen.findByRole('heading', { level: 1, name: secondProject.name })).toBeInTheDocument()
+    await openSolicitationFiles(user)
     expect(screen.getByText(bravoDocument.name)).toBeInTheDocument()
 
-    await act(async () => {
-      oldUpload.resolve(jsonResponse({ documents: [staleDocument] }, 201))
-    })
+    await act(async () => { oldUpload.resolve(jsonResponse({ documents: [staleDocument] }, 201)) })
     expect(screen.queryByText(staleDocument.name)).not.toBeInTheDocument()
     expect(screen.getByText(bravoDocument.name)).toBeInTheDocument()
   })
@@ -348,9 +411,7 @@ describe('App', () => {
       if (url === '/api/projects' && method === 'GET') return jsonResponse([])
       if (url === '/api/projects' && method === 'POST') return jsonResponse(project, 201)
       if (url === `/api/projects/${project.id}`) return jsonResponse(project)
-      if (url === `/api/projects/${project.id}/documents` && method === 'POST') {
-        return jsonResponse({ documents: [uploaded] }, 201)
-      }
+      if (url === `/api/projects/${project.id}/documents` && method === 'POST') return jsonResponse({ documents: [uploaded] }, 201)
       if (url === `/api/projects/${project.id}/documents`) return initialManifest.promise
       return jsonResponse({ detail: 'Not found' }, 404)
     })
@@ -359,20 +420,15 @@ describe('App', () => {
 
     render(<App />)
     expect(await screen.findByText('No projects yet')).toBeInTheDocument()
-    await user.type(screen.getByLabelText(/project name/i), project.name)
-    await user.click(screen.getByRole('button', { name: /create project/i }))
+    await createProjectThroughWizard(user)
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+    await openSolicitationFiles(user)
 
-    await user.upload(
-      screen.getByLabelText(/choose documents/i),
-      new File(['new'], uploaded.name, { type: 'application/pdf' }),
-    )
+    await user.upload(documentUploadInput(), new File(['new'], uploaded.name, { type: 'application/pdf' }))
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
     expect(await screen.findByText(uploaded.name)).toBeInTheDocument()
 
-    await act(async () => {
-      initialManifest.resolve(jsonResponse([]))
-    })
+    await act(async () => { initialManifest.resolve(jsonResponse([])) })
     expect(screen.getByText(uploaded.name)).toBeInTheDocument()
   })
 })

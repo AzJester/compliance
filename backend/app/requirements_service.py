@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from .config import Settings
+from .freshness import mark_crosswalk_stale
 from .models import (
     CDRL,
+    SOLICITATION_DOCUMENT_CLASSIFICATIONS,
     Document,
+    DocumentProfile,
     DocumentStatus,
     Project,
     Requirement,
+    RequirementExtractionState,
     ReviewAction,
     ReviewDecision,
     ValidationStatus,
@@ -103,10 +108,18 @@ def extract_project_register(
     documents = list(
         session.scalars(
             select(Document)
-            .options(selectinload(Document.blob))
+            .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
+            .options(
+                selectinload(Document.blob),
+                selectinload(Document.workflow_profile),
+            )
             .where(
                 Document.project_id == project.id,
                 Document.status == DocumentStatus.EXTRACTED,
+                or_(
+                    DocumentProfile.document_id.is_(None),
+                    DocumentProfile.classification.in_(SOLICITATION_DOCUMENT_CLASSIFICATIONS),
+                ),
             )
             .order_by(Document.created_at, Document.id)
         )
@@ -187,14 +200,42 @@ def extract_project_register(
             else:
                 counters.cdrls_reused += 1
 
-    total_requirements = session.scalar(
-        select(func.count(Requirement.id)).where(Requirement.project_id == project.id)
-    )
-    pending_requirements = session.scalar(
-        select(func.count(Requirement.id)).where(
+    analyzed_at = utc_now()
+    for document in documents:
+        state = session.get(RequirementExtractionState, document.id)
+        if state is None:
+            state = RequirementExtractionState(
+                document_id=document.id,
+                project_id=project.id,
+                blob_sha256=document.blob_sha256,
+                text_sha256="",
+                classification=document.classification,
+                rule_version=RULE_VERSION,
+                analyzed_at=analyzed_at,
+            )
+            session.add(state)
+        state.project_id = project.id
+        state.blob_sha256 = document.blob_sha256
+        state.text_sha256 = hashlib.sha256(document.extracted_text.encode("utf-8")).hexdigest()
+        state.classification = document.classification
+        state.rule_version = RULE_VERSION
+        state.analyzed_at = analyzed_at
+
+    active_requirement_count = (
+        select(func.count(Requirement.id))
+        .join(Document, Document.id == Requirement.document_id)
+        .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
+        .where(
             Requirement.project_id == project.id,
-            Requirement.validation_status == ValidationStatus.PENDING,
+            or_(
+                DocumentProfile.document_id.is_(None),
+                DocumentProfile.classification.in_(SOLICITATION_DOCUMENT_CLASSIFICATIONS),
+            ),
         )
+    )
+    total_requirements = session.scalar(active_requirement_count)
+    pending_requirements = session.scalar(
+        active_requirement_count.where(Requirement.validation_status == ValidationStatus.PENDING)
     )
     return ExtractionSummary(
         documents_analyzed=counters.documents_analyzed,
@@ -286,6 +327,12 @@ def apply_requirement_patch(
         action = ReviewAction.UPDATED
 
     current = _state(requirement)
+    if any(previous[field] != current[field] for field in _EDITABLE_FIELDS):
+        mark_crosswalk_stale(
+            session,
+            requirement.project_id,
+            requirement_id=requirement.id,
+        )
     decision = ReviewDecision(
         project_id=requirement.project_id,
         requirement_id=requirement.id,
