@@ -56,7 +56,7 @@ export function NewProjectForm({ isSubmitting, onCreate }: NewProjectFormProps) 
     <form className="new-project" onSubmit={submit} aria-labelledby="new-project-title">
       <div className="section-kicker">Workspace setup</div>
       <h2 id="new-project-title">New project</h2>
-      <p className="form-intro">Create a protected workspace for one solicitation package.</p>
+      <p className="form-intro">Create a project record for one solicitation package.</p>
 
       <label>
         Project name <span aria-hidden="true">*</span>

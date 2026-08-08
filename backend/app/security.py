@@ -124,7 +124,7 @@ def _security_headers(message: Message, *, web_enabled: bool, path: str) -> None
 
 
 class LocalRequestMiddleware:
-    """Enforce local isolation or the explicit authenticated HTTPS web boundary."""
+    """Enforce local isolation and the configured HTTPS web boundary."""
 
     def __init__(self, app: ASGIApp, settings: Settings) -> None:
         self.app = app
@@ -257,7 +257,7 @@ class LocalRequestMiddleware:
             )
             return
 
-        if self.settings.web_enabled and not is_health:
+        if self.settings.web_authentication_enabled and not is_health:
             if not _valid_basic_credentials(headers.get("authorization"), self.settings):
                 retry_after = self.auth_limiter.record_or_limit(client_host)
                 response_headers = {

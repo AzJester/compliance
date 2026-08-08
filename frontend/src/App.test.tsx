@@ -116,7 +116,7 @@ describe('App', () => {
     expect(screen.getByLabelText(/data security notice/i)).toHaveTextContent(
       'PUBLIC-data boundary',
     )
-    expect(screen.getByText(/public prototype only/i)).toHaveTextContent(
+    expect(screen.getByText(/use synthetic PUBLIC data only/i)).toHaveTextContent(
       /do not import CUI, ITAR-controlled, classified, source-selection, or proprietary proposal data/i,
     )
     const sensitivity = screen.getByLabelText(/sensitivity/i)
@@ -145,6 +145,73 @@ describe('App', () => {
       due_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
     expect(createBody.due_at).toBe(new Date('2026-09-15T12:00').toISOString())
+  })
+
+  it('warns anonymous visitors and requires PUBLIC-data acknowledgement before upload', async () => {
+    const uploaded: ProjectDocument = {
+      id: 'document-public',
+      name: 'synthetic-package.pdf',
+      content_type: 'application/pdf',
+      size_bytes: 1024,
+      sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      status: 'STORED',
+      extraction_count: 0,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/health') {
+        return jsonResponse({ status: 'ok', access_mode: 'anonymous' })
+      }
+      if (url === '/api/projects' && method === 'GET') return jsonResponse([])
+      if (url === '/api/projects' && method === 'POST') return jsonResponse(project, 201)
+      if (url === `/api/projects/${project.id}`) return jsonResponse(project)
+      if (url === `/api/projects/${project.id}/documents` && method === 'POST') {
+        return jsonResponse([uploaded], 201)
+      }
+      if (url === `/api/projects/${project.id}/documents`) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: /build a shared compliance record/i }))
+      .toBeInTheDocument()
+    const warning = screen.getByLabelText(/shared public demo warning/i)
+    expect(warning).toHaveTextContent(/shared public demo.*no private workspace/i)
+    expect(warning).toHaveTextContent(/anyone can view or change all projects and uploads/i)
+    expect(warning).toHaveTextContent(/synthetic PUBLIC data only/i)
+    expect(warning).toHaveTextContent(/content is retained on shared storage/i)
+    expect(warning).toHaveTextContent(/no privacy, identity, or audit assurance/i)
+    expect(warning).toHaveTextContent(/anonymous access/i)
+    expect(screen.queryByText(/upload securely|opening secure workspace|protected project workspace/i))
+      .not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText(/project name/i), project.name)
+    await user.click(screen.getByRole('button', { name: /create project/i }))
+    expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+
+    const file = new File(['synthetic data'], uploaded.name, { type: uploaded.content_type! })
+    await user.upload(screen.getByLabelText(/choose documents/i), file)
+    const uploadButton = screen.getByRole('button', { name: /upload 1 file to shared storage/i })
+    expect(uploadButton).toBeDisabled()
+    expect(fetchMock.mock.calls.some(
+      ([input, init]) => String(input).endsWith('/documents') && init?.method === 'POST',
+    )).toBe(false)
+
+    const acknowledgement = screen.getByRole('checkbox', {
+      name: /only synthetic PUBLIC data.*anyone can view or change uploads retained on shared storage/i,
+    })
+    await user.click(acknowledgement)
+    expect(uploadButton).toBeEnabled()
+    await user.click(uploadButton)
+
+    expect(await screen.findByText(uploaded.name)).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(
+      ([input, init]) => String(input).endsWith('/documents') && init?.method === 'POST',
+    )).toBe(true)
   })
 
   it('uploads selected files and renders the returned manifest record', async () => {
@@ -185,6 +252,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
     const file = new File(['rfp content'], uploaded.name, { type: uploaded.content_type! })
     await user.upload(screen.getByLabelText(/choose documents/i), file)
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
 
     const table = await screen.findByRole('table')

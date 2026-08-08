@@ -11,6 +11,7 @@ interface ProjectOverviewProps {
   documentError: string | null
   uploadState: UploadState
   uploadMessage: string | null
+  isAnonymous: boolean
   onUpload: (files: File[]) => Promise<void>
   onRefresh: () => void
 }
@@ -39,6 +40,7 @@ export function ProjectOverview({
   documentError,
   uploadState,
   uploadMessage,
+  isAnonymous,
   onUpload,
   onRefresh,
 }: ProjectOverviewProps) {
@@ -113,7 +115,12 @@ export function ProjectOverview({
       >
         {activeView === 'documents' ? (
           <>
-            <DocumentUpload state={uploadState} message={uploadMessage} onUpload={onUpload} />
+            <DocumentUpload
+              state={uploadState}
+              message={uploadMessage}
+              isAnonymous={isAnonymous}
+              onUpload={onUpload}
+            />
             <DocumentManifest documents={documents} isLoading={isLoadingDocuments} error={documentError} onRefresh={onRefresh} />
           </>
         ) : (

@@ -88,6 +88,33 @@ def test_web_mode_requires_explicit_secure_configuration(tmp_path: Path) -> None
                 }
             )
         )  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="COMPLIANCE_WEB_ACCESS_MODE"):
+        Settings(**(common | {"web_access_mode": "public"}))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="Trusted proxy headers require"):
+        Settings(
+            **(
+                common
+                | {
+                    "web_access_mode": "anonymous",
+                    "auth_username": None,
+                    "auth_password": None,
+                    "trust_proxy_headers": True,
+                }
+            )
+        )  # type: ignore[arg-type]
+
+    anonymous = Settings(
+        **(
+            common
+            | {
+                "web_access_mode": "anonymous",
+                "auth_username": None,
+                "auth_password": None,
+            }
+        )
+    )  # type: ignore[arg-type]
+    assert anonymous.web_enabled is True
+    assert anonymous.web_authentication_enabled is False
 
 
 def test_local_mode_cannot_expand_its_trusted_host_boundary() -> None:
@@ -97,6 +124,8 @@ def test_local_mode_cannot_expand_its_trusted_host_boundary() -> None:
         Settings(managed_proxy=True)
     with pytest.raises(ValueError, match="Proxy settings cannot"):
         Settings(trusted_proxy_cidrs=("127.0.0.1/32",))
+    with pytest.raises(ValueError, match="only select anonymous in web mode"):
+        Settings(web_access_mode="anonymous")
 
 
 def test_render_environment_augments_custom_domain_and_uses_web_limits(
@@ -109,6 +138,7 @@ def test_render_environment_augments_custom_domain_and_uses_web_limits(
     monkeypatch.setenv("COMPLIANCE_TRUST_PROXY_HEADERS", "true")
     monkeypatch.setenv("COMPLIANCE_AUTH_USERNAME", _USERNAME)
     monkeypatch.setenv("COMPLIANCE_AUTH_PASSWORD", _PASSWORD)
+    monkeypatch.delenv("COMPLIANCE_WEB_ACCESS_MODE", raising=False)
     monkeypatch.setenv("RENDER", "true")
     monkeypatch.setenv("RENDER_EXTERNAL_URL", _RENDER_ORIGIN)
     monkeypatch.setenv("RENDER_EXTERNAL_HOSTNAME", _RENDER_HOST)
@@ -128,7 +158,30 @@ def test_render_environment_augments_custom_domain_and_uses_web_limits(
     assert settings.max_archive_depth == 3
     assert settings.max_compression_ratio == 100
     assert settings.managed_proxy is True
+    assert settings.web_access_mode == "authenticated"
+    assert settings.web_authentication_enabled is True
     assert _PASSWORD not in repr(settings)
+
+
+def test_render_environment_can_explicitly_select_anonymous_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("COMPLIANCE_MODE", "web")
+    monkeypatch.setenv("COMPLIANCE_HOST", "0.0.0.0")
+    monkeypatch.setenv("COMPLIANCE_ALLOWED_ORIGINS", _CUSTOM_ORIGIN)
+    monkeypatch.setenv("COMPLIANCE_TRUSTED_HOSTS", _CUSTOM_HOST)
+    monkeypatch.setenv("COMPLIANCE_TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("COMPLIANCE_WEB_ACCESS_MODE", "AnOnYmOuS")
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.delenv("COMPLIANCE_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("COMPLIANCE_AUTH_PASSWORD", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.web_access_mode == "anonymous"
+    assert settings.web_authentication_enabled is False
+    assert settings.auth_username is None
+    assert settings.auth_password is None
 
 
 def test_web_ui_and_api_require_basic_auth_but_health_is_available(tmp_path: Path) -> None:
@@ -144,6 +197,7 @@ def test_web_ui_and_api_require_basic_auth_but_health_is_available(tmp_path: Pat
         frontend = client.get("/", headers={"authorization": _authorization()})
 
     assert health.status_code == 200
+    assert health.json()["access_mode"] == "authenticated"
     assert denied.status_code == 401
     assert denied.headers["www-authenticate"].startswith("Basic ")
     assert denied.headers["cache-control"] == "no-store"
@@ -163,6 +217,79 @@ def test_web_ui_and_api_require_basic_auth_but_health_is_available(tmp_path: Pat
         hostile_health = client.get("/api/health", headers={"host": "attacker.example"})
     assert direct_health.status_code == 200
     assert hostile_health.status_code == 400
+
+
+def test_anonymous_web_mode_allows_ui_api_reads_and_origin_bound_mutations(
+    tmp_path: Path,
+) -> None:
+    settings = _web_settings(
+        tmp_path,
+        web_access_mode="anonymous",
+        auth_username=None,
+        auth_password=None,
+    )
+    app = create_app(settings)
+    payload = {"name": "Public synthetic RFP", "sensitivity": "PUBLIC"}
+
+    with _web_client(app) as client:
+        health = client.get("/api/health")
+        frontend = client.get("/")
+        projects = client.get("/api/projects")
+        malformed_auth = client.get("/api/projects", headers={"authorization": "not-basic"})
+        missing_origin = client.post("/api/projects", json=payload)
+        hostile_origin = client.post(
+            "/api/projects", json=payload, headers={"origin": "https://attacker.example"}
+        )
+        created = client.post("/api/projects", json=payload, headers={"origin": _CUSTOM_ORIGIN})
+
+    assert health.status_code == 200
+    assert health.json()["access_mode"] == "anonymous"
+    assert frontend.status_code == 200
+    assert "Compliance" in frontend.text
+    assert projects.status_code == 200
+    assert "www-authenticate" not in projects.headers
+    assert malformed_auth.status_code == 200
+    assert missing_origin.status_code == 403
+    assert hostile_origin.status_code == 403
+    assert created.status_code == 201
+    assert projects.headers["cache-control"] == "no-store"
+    assert projects.headers["strict-transport-security"].startswith("max-age=")
+    assert projects.headers["content-security-policy"].startswith("default-src 'self'")
+
+
+def test_anonymous_web_mode_retains_host_tls_and_proxy_enforcement(tmp_path: Path) -> None:
+    app = create_app(
+        _web_settings(
+            tmp_path,
+            web_access_mode="anonymous",
+            auth_username=None,
+            auth_password=None,
+        )
+    )
+
+    with _web_client(app) as client:
+        allowed = client.get("/api/projects")
+        bad_host = client.get("/api/projects", headers={"host": "attacker.example"})
+        insecure = client.get("/api/projects", headers={"x-forwarded-proto": "http"})
+
+    cidr_app = create_app(
+        _web_settings(
+            tmp_path / "cidr",
+            managed_proxy=False,
+            trusted_proxy_cidrs=("192.0.2.0/24",),
+            web_access_mode="anonymous",
+            auth_username=None,
+            auth_password=None,
+        )
+    )
+    with _web_client(cidr_app) as client:
+        untrusted_proxy = client.get("/api/projects")
+
+    assert allowed.status_code == 200
+    assert bad_host.status_code == 400
+    assert insecure.status_code == 400
+    assert untrusted_proxy.status_code == 400
+    assert untrusted_proxy.json()["detail"] == "Request did not arrive through a trusted proxy."
 
 
 def test_custom_and_render_hosts_are_both_accepted(tmp_path: Path) -> None:

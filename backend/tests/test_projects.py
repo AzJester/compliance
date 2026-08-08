@@ -13,7 +13,12 @@ def test_health_is_local_and_telemetry_free(client: TestClient) -> None:
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "host": "127.0.0.1", "telemetry": False}
+    assert response.json() == {
+        "status": "ok",
+        "host": "127.0.0.1",
+        "telemetry": False,
+        "access_mode": "local",
+    }
 
 
 def test_project_crud(client: TestClient) -> None:

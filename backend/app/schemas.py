@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -94,6 +95,7 @@ class HealthResponse(BaseModel):
     status: str
     host: str
     telemetry: bool
+    access_mode: Literal["local", "authenticated", "anonymous"]
 
 
 class ExtractionSummary(BaseModel):

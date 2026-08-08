@@ -1,6 +1,7 @@
 import type {
   CDRL,
   ExtractionSummary,
+  HealthResponse,
   Project,
   ProjectCreate,
   ProjectDocument,
@@ -88,7 +89,7 @@ function unwrapList<T>(payload: T[] | Record<string, unknown>, keys: string[]): 
 }
 
 export const api = {
-  health: () => request<{ status: string }>('/api/health'),
+  health: () => request<HealthResponse>('/api/health'),
 
   async listProjects(): Promise<Project[]> {
     const payload = await request<Project[] | { projects: Project[] }>('/api/projects')
