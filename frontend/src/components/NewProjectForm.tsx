@@ -11,7 +11,7 @@ const initialProject: ProjectCreate = {
   solicitation_number: '',
   agency: '',
   due_at: '',
-  sensitivity: 'CUI',
+  sensitivity: 'PUBLIC',
 }
 
 export function NewProjectForm({ isSubmitting, onCreate }: NewProjectFormProps) {
@@ -87,9 +87,10 @@ export function NewProjectForm({ isSubmitting, onCreate }: NewProjectFormProps) 
             onChange={(event) => update('sensitivity', event.target.value as Sensitivity)}
           >
             <option value="PUBLIC">Public</option>
-            <option value="CUI">CUI</option>
-            <option value="ITAR">ITAR</option>
+            <option value="CUI" disabled>CUI (not enabled in prototype)</option>
+            <option value="ITAR" disabled>ITAR (not enabled in prototype)</option>
           </select>
+          <small>Use public, synthetic, or otherwise approved non-sensitive data only.</small>
         </label>
       </div>
 

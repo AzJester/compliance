@@ -40,6 +40,34 @@ afterEach(() => {
 })
 
 describe('App', () => {
+  it('supports arrow, Home, and End navigation across workspace tabs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/health') return jsonResponse({ status: 'ok' })
+      if (url === '/api/projects') return jsonResponse([project])
+      if (url === `/api/projects/${project.id}`) return jsonResponse(project)
+      if (url === `/api/projects/${project.id}/documents`) return jsonResponse([])
+      if (url === `/api/projects/${project.id}/requirements`) return jsonResponse([])
+      if (url === `/api/projects/${project.id}/cdrls`) return jsonResponse([])
+      return jsonResponse({ detail: 'Not found' }, 404)
+    }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
+    const documentsTab = screen.getByRole('tab', { name: 'Documents' })
+    documentsTab.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'All Requirements' })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: 'All Requirements' })).toHaveAttribute('aria-selected', 'true')
+
+    await user.keyboard('{End}')
+    expect(screen.getByRole('tab', { name: 'CDRLs' })).toHaveFocus()
+    await user.keyboard('{Home}')
+    expect(documentsTab).toHaveFocus()
+    expect(documentsTab).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('shows a recoverable error when a selected project cannot be loaded', async () => {
     let projectReads = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -84,6 +112,13 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByText('No projects yet')).toBeInTheDocument()
+    expect(screen.getByText(/public prototype only/i)).toHaveTextContent(
+      /do not import CUI, ITAR-controlled, classified, source-selection, or proprietary proposal data/i,
+    )
+    const sensitivity = screen.getByLabelText(/sensitivity/i)
+    expect(sensitivity).toHaveValue('PUBLIC')
+    expect(within(sensitivity).getByRole('option', { name: /CUI \(not enabled/i })).toBeDisabled()
+    expect(within(sensitivity).getByRole('option', { name: /ITAR \(not enabled/i })).toBeDisabled()
     await user.type(screen.getByLabelText(/project name/i), project.name)
     await user.type(screen.getByLabelText(/solicitation number/i), project.solicitation_number!)
     await user.type(screen.getByLabelText(/^agency$/i), project.agency!)
@@ -102,7 +137,7 @@ describe('App', () => {
       name: project.name,
       solicitation_number: project.solicitation_number,
       agency: project.agency,
-      sensitivity: 'CUI',
+      sensitivity: 'PUBLIC',
       due_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
     expect(createBody.due_at).toBe(new Date('2026-09-15T12:00').toISOString())

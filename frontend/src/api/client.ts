@@ -1,4 +1,13 @@
-import type { Project, ProjectCreate, ProjectDocument } from '../types'
+import type {
+  CDRL,
+  ExtractionSummary,
+  Project,
+  ProjectCreate,
+  ProjectDocument,
+  Requirement,
+  RequirementUpdate,
+  ReviewDecision,
+} from '../types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -69,9 +78,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-function unwrapList<T>(payload: T[] | { projects?: T[]; documents?: T[] }): T[] {
+function unwrapList<T>(payload: T[] | Record<string, unknown>, keys: string[]): T[] {
   if (Array.isArray(payload)) return payload
-  return payload.projects ?? payload.documents ?? []
+  for (const key of keys) {
+    const value = payload[key]
+    if (Array.isArray(value)) return value as T[]
+  }
+  return []
 }
 
 export const api = {
@@ -79,7 +92,7 @@ export const api = {
 
   async listProjects(): Promise<Project[]> {
     const payload = await request<Project[] | { projects: Project[] }>('/api/projects')
-    return unwrapList(payload)
+    return unwrapList(payload, ['projects', 'items', 'results'])
   },
 
   getProject: (projectId: string) =>
@@ -96,7 +109,7 @@ export const api = {
     const payload = await request<
       ProjectDocument[] | { documents: ProjectDocument[] }
     >(`/api/projects/${encodeURIComponent(projectId)}/documents`)
-    return unwrapList(payload)
+    return unwrapList(payload, ['documents', 'items', 'results'])
   },
 
   async uploadDocuments(projectId: string, files: File[]): Promise<ProjectDocument[]> {
@@ -108,6 +121,42 @@ export const api = {
       method: 'POST',
       body,
     })
-    return unwrapList(payload)
+    return unwrapList(payload, ['documents', 'items', 'results'])
+  },
+
+  extractRequirements: (projectId: string) =>
+    request<ExtractionSummary>(`/api/projects/${encodeURIComponent(projectId)}/requirements/extract`, {
+      method: 'POST',
+    }),
+
+  async listRequirements(projectId: string): Promise<Requirement[]> {
+    const payload = await request<Requirement[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/requirements`,
+    )
+    return unwrapList(payload, ['requirements', 'items', 'results'])
+  },
+
+  updateRequirement: (projectId: string, requirementId: string, update: RequirementUpdate) =>
+    request<Requirement>(
+      `/api/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      },
+    ),
+
+  async listRequirementReviews(projectId: string, requirementId: string): Promise<ReviewDecision[]> {
+    const payload = await request<ReviewDecision[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/reviews`,
+    )
+    return unwrapList(payload, ['reviews', 'decisions', 'items', 'results'])
+  },
+
+  async listCdrls(projectId: string): Promise<CDRL[]> {
+    const payload = await request<CDRL[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/cdrls`,
+    )
+    return unwrapList(payload, ['cdrls', 'CDRLs', 'items', 'results'])
   },
 }

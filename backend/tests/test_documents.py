@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
+
+from backend.app.extraction import extract_document
 
 from .conftest import (
     docx_bytes,
@@ -57,6 +61,25 @@ def test_supported_documents_are_preserved_and_extracted(
     listing = client.get(f"/api/projects/{project['id']}/documents")
     assert listing.status_code == 200
     assert {item["id"] for item in listing.json()} == {item["id"] for item in documents}
+
+
+def test_extractors_emit_truthful_source_markers_and_keep_visible_leading_zeros() -> None:
+    assert "[PDF Page 1]" in extract_document("rfp.pdf", pdf_bytes()).text
+    assert "[DOCX Paragraph 1]" in extract_document("response.docx", docx_bytes()).text
+    assert "[Slide 1]" in extract_document("briefing.pptx", pptx_bytes()).text
+
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "CDRL"
+    sheet["A1"] = 7
+    sheet["A1"].number_format = "0000"
+    stream = io.BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    extracted = extract_document("cdrl.xlsx", stream.getvalue()).text
+    assert '[XLSX Sheet "CDRL" Row 1]' in extracted
+    assert "0007" in extracted
 
 
 def test_blank_pdf_needs_ocr_and_parser_error_is_safe(

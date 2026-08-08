@@ -13,6 +13,13 @@ application does not enable CORS or telemetry.
 limit for chunked or undeclared-length bodies while FastAPI/Starlette parses multipart
 framing. The ingestion pipeline additionally enforces per-file, file-count,
 archive-depth, compression-method, compression-ratio, and expanded-byte checks.
+Requirement extraction also enforces configurable per-document and per-run limits for
+requirement and CDRL candidates. Limit failures return `413`, roll back the transaction,
+and do not leave a partial register.
+
+Project creation accepts `PUBLIC` sensitivity only. The API rejects `CUI` and `ITAR`
+labels even when a caller bypasses the user interface. This prototype is not an
+authorized environment for either data type.
 
 Original bytes are stored in content-addressed, write-once-by-the-application blob
 paths. These paths are not OS-immutable: a sufficiently privileged local process can
@@ -25,3 +32,14 @@ The loopback and browser-origin controls prevent remote and DNS-rebinding access
 do not isolate the service from any local process or account able to connect. Windows
 account separation, NTFS ACLs, endpoint controls, and workstation policy remain
 deployment responsibilities. Remote deployment is outside the supported boundary.
+
+Requirement extraction is a deterministic local rules process. It does not load a
+remote model, dereference document links, call an external reference service, or send
+source content over the network. Exact excerpts are treated as untrusted text and are
+returned as JSON for escaped text rendering by the local user interface.
+
+Review decisions preserve before-and-after values, a reviewer label, a timestamp, and
+the review note. The prototype does not yet bind that label to the signed-in Windows
+identity, so this history is not a nonrepudiation control. Stable extraction reruns
+preserve reviewed records, but workstation administrators and processes with direct
+database access remain inside the trusted local boundary.

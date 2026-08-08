@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import struct
 import zipfile
@@ -13,9 +14,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from pptx import Presentation
+from sqlalchemy import select
 
 from backend.app.config import Settings
 from backend.app.main import create_app
+from backend.app.models import Blob, Document, DocumentStatus
 
 
 def make_test_client(app: FastAPI) -> TestClient:
@@ -24,6 +27,44 @@ def make_test_client(app: FastAPI) -> TestClient:
         client=("127.0.0.1", 50_000),
         headers={"host": "127.0.0.1"},
     )
+
+
+def seed_extracted_document(
+    client: TestClient,
+    project_id: str,
+    text: str,
+    *,
+    name: str = "synthetic.txt.pdf",
+    content_type: str = "application/pdf",
+    status: DocumentStatus = DocumentStatus.EXTRACTED,
+    duplicate_of: str | None = None,
+) -> str:
+    sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        blob = session.scalar(select(Blob).where(Blob.sha256 == sha256))
+        if blob is None:
+            blob = Blob(
+                sha256=sha256,
+                size_bytes=len(text.encode("utf-8")),
+                storage_path=f"synthetic/{sha256}",
+            )
+            session.add(blob)
+            session.flush()
+        document = Document(
+            project_id=project_id,
+            blob_sha256=sha256,
+            name=name,
+            relative_path=name,
+            content_type=content_type,
+            status=status,
+            extraction_count=len(text),
+            extracted_text=text,
+            duplicate_of=duplicate_of,
+        )
+        session.add(document)
+        session.commit()
+        return document.id
 
 
 def pdf_bytes(text: str = "The offeror shall provide a management plan.") -> bytes:
@@ -147,7 +188,7 @@ def project(client: TestClient) -> dict[str, object]:
             "agency": "Department of the Air Force",
             "due_at": "2026-09-01T16:00:00-07:00",
             "due_timezone": "America/Phoenix",
-            "sensitivity": "CUI",
+            "sensitivity": "PUBLIC",
         },
     )
     assert response.status_code == 201

@@ -5,7 +5,8 @@ export function SecurityBanner() {
       <div>
         <strong>Local processing boundary</strong>
         <span>
-          Documents stay on this workstation. Do not import classified material.
+          Public prototype only. Do not import CUI, ITAR-controlled, classified,
+          source-selection, or proprietary proposal data.
         </span>
       </div>
       <span className="security-banner__mode">NO TELEMETRY</span>
