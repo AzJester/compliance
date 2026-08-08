@@ -115,4 +115,4 @@ pnpm test --run
 pnpm build
 ```
 
-Before opening a pull request, run all three checks and inspect `git status` to ensure that only intended source and synthetic test files are present. GitHub Actions repeats the backend tests on Windows and the frontend tests and build on Ubuntu. The CI workflow has read-only repository permissions and performs no deployment.
+Before opening a pull request, run all three checks and inspect `git status` to ensure that only intended source and synthetic test files are present. GitHub Actions repeats the backend tests on Windows, runs the frontend tests and build on Ubuntu, and builds plus smoke-tests the production container. The CI workflow has read-only repository permissions and performs no deployment.

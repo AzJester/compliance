@@ -4,12 +4,13 @@
 
 ## 1. Product objective
 
-Build a Windows-hosted local web application that ingests a complete Department of Defense solicitation package and a contractor's written response, converts both into traceable structured data, and produces an evidence-backed compliance crosswalk.
+Build a standalone-first application that ingests a complete Department of Defense solicitation package and a contractor's written response, converts both into traceable structured data, and produces an evidence-backed compliance crosswalk.
 
 The application will:
 
-- Run on one approved Windows workstation and bind its web interface only to `127.0.0.1`.
-- Perform OCR, extraction, search, and model inference locally without sending documents, prompts, analytics, or telemetry to a cloud service.
+- Default to one approved Windows workstation with its web interface bound only to `127.0.0.1`.
+- Permit a separate, explicit single-instance hosted mode for PUBLIC-data demonstrations only; require HTTPS, authentication, exact hosts and origins, and persistent storage.
+- Perform OCR, extraction, search, and model inference inside the approved application boundary without sending documents, prompts, analytics, or telemetry to an external AI or reference service. The current hosted prototype uses deterministic extraction and no model inference.
 - Support searchable and scanned PDF, DOCX, XLSX, PPTX, and nested ZIP packages.
 - Recognize the uniform contract structure described by [FAR 15.204-1](https://www.acquisition.gov/far/15.204-1), including Section L proposal instructions and Section M evaluation factors.
 - Extract candidate requirements from the solicitation, attachments, exhibits, amendments, and documents incorporated by reference.
@@ -322,9 +323,9 @@ Version the internal API and JSON export as `rfp-compliance/v1`. Principal recor
 
 Every derived record retains source-span identifiers, extraction method, rule/model version, confidence, amendment version, creator, reviewer, and timestamps.
 
-### 6.3 Local interfaces
+### 6.3 Application interfaces
 
-Expose loopback-only endpoints for:
+Expose these endpoints on loopback in the default standalone mode:
 
 - Project creation and metadata.
 - Package and proposal import.
@@ -336,19 +337,20 @@ Expose loopback-only endpoints for:
 - Reference-pack import and version reporting.
 - Health checks and content-free diagnostics.
 
-Remote access and a public network API are outside the first-release scope.
+The optional hosted mode exposes the same UI and API only behind its configured HTTPS origin, exact trusted hosts, and shared authentication. It remains a single-workspace PUBLIC-data demonstration. Remote access to CUI, ITAR-controlled data, classified information, source-selection information, or proprietary proposal content remains outside the first-release scope.
 
 ## 7. Security boundary
 
 [NIST SP 800-171 Revision 3](https://csrc.nist.gov/pubs/sp/800/171/r3/final) applies security requirements to components of nonfederal systems that process, store, or transmit CUI, or protect those components. The application must therefore operate within an appropriately controlled and assessed workstation and organizational environment.
 
-Implement:
+Implement for the standalone controlled-data target:
 
 - Loopback-only networking and zero telemetry.
 - Windows-user access, NTFS access controls, automatic screen-lock dependency, and least-privilege execution.
 - A required BitLocker-protected project volume and approved Windows cryptographic modules.
 - Per-project sensitivity metadata and append-only audit events.
 - Protected temporary directories with cleanup after processing and startup recovery after interruption.
+
 - CUI banner, portion-marking, dissemination-control, distribution-statement, and export-control detection.
 - Explicit warnings and confirmation before copy or export actions.
 - Malware scanning through the installed endpoint-security provider.
@@ -356,6 +358,8 @@ Implement:
 - No automatic execution of links, macros, scripts, or embedded attachments.
 - Backup and restoration only to administrator-approved encrypted locations.
 - Diagnostics exports that exclude document content by default.
+
+The hosted PUBLIC-data mode is a separate boundary and is not a CUI or ITAR deployment. It requires fail-closed authentication and network settings, a non-root container, reduced resource limits, persistent single-instance storage, and an approved backup and recovery procedure. Moving the container to a web host does not satisfy NIST, CMMC, export-control, contractual, or classified-system requirements.
 
 The system must not be marketed as automatically providing CMMC certification, NIST compliance, or authorization to handle CUI. Those determinations depend on the complete environment, security plan, organizational controls, contract clauses, configuration, and assessment.
 

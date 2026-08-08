@@ -112,6 +112,10 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByText('No projects yet')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Application service online')
+    expect(screen.getByLabelText(/data security notice/i)).toHaveTextContent(
+      'PUBLIC-data boundary',
+    )
     expect(screen.getByText(/public prototype only/i)).toHaveTextContent(
       /do not import CUI, ITAR-controlled, classified, source-selection, or proprietary proposal data/i,
     )

@@ -2,7 +2,7 @@
 
 # Requirements Register
 
-The Phase 2 requirements register converts locally extracted solicitation text into traceable candidate obligations for human review. It is a rules-based baseline: it does not call a cloud service, load a remote model, dereference solicitation links, or transmit document content.
+The Phase 2 requirements register converts solicitation text extracted inside the running workstation or container into traceable candidate obligations for human review. It is a rules-based baseline: it does not call an external AI or reference service, load a remote model, dereference solicitation links, or transmit document content outside the application boundary.
 
 ## Review workflow
 
