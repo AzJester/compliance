@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _DEPLOYMENT_MODES = frozenset({"local", "web"})
+_WEB_ACCESS_MODES = frozenset({"authenticated", "anonymous"})
 
 
 def _env_int(name: str, default: int) -> int:
@@ -110,7 +111,7 @@ def _validate_bind_host(host: str, deployment_mode: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    """Runtime settings; web exposure requires an explicit, authenticated mode."""
+    """Runtime settings; web exposure keeps authentication unless explicitly anonymous."""
 
     data_dir: Path = field(default_factory=lambda: Path.cwd() / ".data")
     frontend_dir: Path | None = None
@@ -133,6 +134,7 @@ class Settings:
     trust_proxy_headers: bool = False
     trusted_proxy_cidrs: tuple[str, ...] = ()
     managed_proxy: bool = False
+    web_access_mode: str = "authenticated"
     auth_username: str | None = None
     auth_password: str | None = field(default=None, repr=False)
     auth_attempts_per_minute: int = 10
@@ -142,6 +144,10 @@ class Settings:
         if deployment_mode not in _DEPLOYMENT_MODES:
             raise ValueError("COMPLIANCE_MODE must be 'local' or 'web'")
         object.__setattr__(self, "deployment_mode", deployment_mode)
+        web_access_mode = self.web_access_mode.strip().casefold()
+        if web_access_mode not in _WEB_ACCESS_MODES:
+            raise ValueError("COMPLIANCE_WEB_ACCESS_MODE must be 'authenticated' or 'anonymous'")
+        object.__setattr__(self, "web_access_mode", web_access_mode)
         object.__setattr__(self, "data_dir", self.data_dir.resolve())
         if self.frontend_dir is not None:
             object.__setattr__(self, "frontend_dir", self.frontend_dir.resolve())
@@ -183,11 +189,13 @@ class Settings:
         object.__setattr__(self, "trusted_proxy_cidrs", tuple(normalized_proxy_cidrs))
 
         if deployment_mode == "local":
+            if web_access_mode != "authenticated":
+                raise ValueError("COMPLIANCE_WEB_ACCESS_MODE can only select anonymous in web mode")
             if self.auth_username is not None or self.auth_password is not None:
                 raise ValueError("Web authentication credentials are not used in local mode")
             if self.trust_proxy_headers or self.managed_proxy or self.trusted_proxy_cidrs:
                 raise ValueError("Proxy settings cannot be used in local mode")
-        else:
+        elif web_access_mode == "authenticated":
             username = self.auth_username or ""
             password = self.auth_password or ""
             if (
@@ -202,11 +210,15 @@ class Settings:
                 raise ValueError(
                     "COMPLIANCE_AUTH_PASSWORD must contain at least 16 characters and no controls"
                 )
-            if self.trust_proxy_headers and not (self.managed_proxy or self.trusted_proxy_cidrs):
-                raise ValueError(
-                    "Trusted proxy headers require Render's managed ingress or "
-                    "COMPLIANCE_TRUSTED_PROXY_CIDRS"
-                )
+        if (
+            deployment_mode == "web"
+            and self.trust_proxy_headers
+            and not (self.managed_proxy or self.trusted_proxy_cidrs)
+        ):
+            raise ValueError(
+                "Trusted proxy headers require Render's managed ingress or "
+                "COMPLIANCE_TRUSTED_PROXY_CIDRS"
+            )
 
         for field_name in (
             "port",
@@ -231,6 +243,10 @@ class Settings:
     @property
     def web_enabled(self) -> bool:
         return self.deployment_mode == "web"
+
+    @property
+    def web_authentication_enabled(self) -> bool:
+        return self.web_enabled and self.web_access_mode == "authenticated"
 
     @property
     def database_path(self) -> Path:
@@ -294,6 +310,7 @@ class Settings:
             trust_proxy_headers=_env_bool("COMPLIANCE_TRUST_PROXY_HEADERS"),
             trusted_proxy_cidrs=_env_list("COMPLIANCE_TRUSTED_PROXY_CIDRS"),
             managed_proxy=_env_bool("RENDER") if web_enabled else False,
+            web_access_mode=os.getenv("COMPLIANCE_WEB_ACCESS_MODE", "authenticated"),
             auth_username=os.getenv("COMPLIANCE_AUTH_USERNAME"),
             auth_password=os.getenv("COMPLIANCE_AUTH_PASSWORD"),
             auth_attempts_per_minute=_env_int("COMPLIANCE_AUTH_ATTEMPTS_PER_MINUTE", 10),

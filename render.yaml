@@ -19,6 +19,8 @@ services:
     envVars:
       - key: COMPLIANCE_MODE
         value: web
+      - key: COMPLIANCE_WEB_ACCESS_MODE
+        value: anonymous
       - key: COMPLIANCE_HOST
         value: 0.0.0.0
       - key: COMPLIANCE_DATA_DIR
@@ -29,10 +31,6 @@ services:
         value: https://compliance.insightfuldefense.com
       - key: COMPLIANCE_TRUSTED_HOSTS
         value: compliance.insightfuldefense.com
-      - key: COMPLIANCE_AUTH_USERNAME
-        sync: false
-      - key: COMPLIANCE_AUTH_PASSWORD
-        generateValue: true
       - key: COMPLIANCE_MAX_UPLOAD_FILES
         value: "10"
       - key: COMPLIANCE_MAX_FILE_BYTES

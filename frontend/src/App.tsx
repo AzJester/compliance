@@ -4,6 +4,7 @@ import { ProjectOverview } from './components/ProjectOverview'
 import { ProjectSidebar } from './components/ProjectSidebar'
 import { SecurityBanner } from './components/SecurityBanner'
 import type {
+  AccessMode,
   HealthState,
   Project,
   ProjectCreate,
@@ -17,6 +18,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 export function App() {
   const [health, setHealth] = useState<HealthState>('checking')
+  const [accessMode, setAccessMode] = useState<AccessMode | 'unknown'>('unknown')
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
@@ -88,6 +90,11 @@ export function App() {
       if (!active) return
 
       setHealth(healthResult.status === 'fulfilled' ? 'online' : 'offline')
+      setAccessMode(
+        healthResult.status === 'fulfilled'
+          ? healthResult.value.access_mode ?? 'unknown'
+          : 'unknown',
+      )
       if (projectResult.status === 'fulfilled') {
         setProjects(projectResult.value)
         if (selectedIdRef.current === null && projectResult.value[0]) {
@@ -256,6 +263,7 @@ export function App() {
   }
 
   const activeProject = selectedProject?.id === selectedId ? selectedProject : null
+  const isAnonymous = accessMode === 'anonymous'
 
   return (
     <div className="app-shell">
@@ -271,7 +279,7 @@ export function App() {
         </div>
       </header>
 
-      <SecurityBanner />
+      <SecurityBanner accessMode={accessMode} />
 
       {workspaceError && (
         <div className="global-error" role="alert">
@@ -300,6 +308,7 @@ export function App() {
               documentError={documentError}
               uploadState={uploadState}
               uploadMessage={uploadMessage}
+              isAnonymous={isAnonymous}
               onUpload={uploadDocuments}
               onRefresh={() => void loadDocuments(activeProject.id)}
             />
@@ -321,16 +330,24 @@ export function App() {
           ) : isLoadingProjects || selectedId ? (
             <div className="workspace-loading" aria-busy="true">
               <span /><span /><span />
-              <p>Opening secure workspace…</p>
+              <p>Opening project workspace…</p>
             </div>
           ) : (
             <section className="welcome-state">
               <div className="welcome-state__mark" aria-hidden="true">RFP</div>
               <div className="section-kicker">Ready for intake</div>
-              <h1>Build a defensible compliance record</h1>
-              <p>Create a project to register a solicitation package, preserve source integrity, and prepare every requirement for traceable review.</p>
+              <h1>
+                {isAnonymous
+                  ? 'Build a shared compliance record'
+                  : 'Build a defensible compliance record'}
+              </h1>
+              <p>
+                {isAnonymous
+                  ? 'Create a shared public-demo project to register a synthetic solicitation package and prepare its requirements for review.'
+                  : 'Create a project to register a solicitation package, preserve source integrity, and prepare every requirement for traceable review.'}
+              </p>
               <ol>
-                <li><span>1</span>Create a protected project workspace</li>
+                <li><span>1</span>Create a project record</li>
                 <li><span>2</span>Import the RFP, amendments, and attachments</li>
                 <li><span>3</span>Validate the document manifest before extraction</li>
               </ol>

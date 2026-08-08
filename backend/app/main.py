@@ -53,7 +53,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/health", response_model=HealthResponse)
     def health(session: Session = Depends(get_session)) -> HealthResponse:
         session.execute(select(Project.id).limit(1)).first()
-        return HealthResponse(status="ok", host=resolved_settings.host, telemetry=False)
+        access_mode = (
+            resolved_settings.web_access_mode if resolved_settings.web_enabled else "local"
+        )
+        return HealthResponse(
+            status="ok",
+            host=resolved_settings.host,
+            telemetry=False,
+            access_mode=access_mode,
+        )
 
     @application.post(
         "/api/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED

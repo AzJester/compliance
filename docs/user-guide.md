@@ -6,17 +6,17 @@ This guide explains the current human-reviewed requirements-register workflow. T
 
 ## Data-use boundary
 
-The current release accepts **PUBLIC data only**. Use synthetic or otherwise approved non-sensitive material. Do not upload CUI, ITAR-controlled technical data, classified information, source-selection information, proprietary proposal content, credentials, or customer data.
+The current release accepts only synthetic material or independently confirmed **PUBLIC data** when hosted anonymously. Do not upload non-public solicitation material, proposal content, CUI, ITAR-controlled technical data, classified information, source-selection information, proprietary content, credentials, or customer data.
 
 Running the software on a web server does not make that server suitable for sensitive government information. Hosting real controlled data requires an organization-approved system boundary and separate security authorization that this release does not provide.
 
 ## Open the application
 
-For local use, follow the [development guide](development.md) and open <http://127.0.0.1:5173>. The intended hosted address is <https://compliance.insightfuldefense.com>; use it only after an administrator completes the [deployment checklist](deployment.md#deployment-acceptance-checklist) and confirms that access control is active.
+For local use, follow the [development guide](development.md) and open <http://127.0.0.1:5173>. The intended hosted address is <https://compliance.insightfuldefense.com>; use it only after an administrator completes the [deployment checklist](deployment.md#deployment-acceptance-checklist) and confirms that the deliberate anonymous access policy is active. The hosted application does not require a username or password.
 
-The hosted build first asks for the shared application username and password. The administrator supplies these credentials outside the repository; do not put them in a bookmark, URL, screenshot, or proposal note. The current HTTP Basic sign-in is shared by authorized users and does not identify one person for audit purposes. Close every window in the browser session when finished because browsers can cache Basic credentials.
+Every internet visitor who reaches the hosted application can use its UI and API. Visitors can create and list projects, read project metadata, document manifests, extracted requirements and review history, upload files, run extraction, and change review records. The application has no user accounts, privacy boundary, ownership check, roles, authorization, tenant isolation, or verified audit identity. Other visitors may see or change what you enter. Uploads persist on the shared service disk, and this release has no user-facing deletion workflow. Repeated uploads can exhaust persistent storage or disrupt the service even though individual requests are limited. HTTPS protects data in transit but does not make anonymously stored data private.
 
-After sign-in, the header should report that the service is online. If it reports that the service is unavailable, refresh once and then ask the administrator to verify the application health endpoint and logs.
+After the page opens, the header should report that the service is online. If it reports that the service is unavailable, refresh once and then ask the administrator to verify the application health endpoint and logs.
 
 ## 1. Create a project
 
@@ -130,7 +130,8 @@ Treat backups as at least as sensitive as their source documents. Git ignore rul
 - No proposal-response ingestion or requirement-to-response crosswalk yet
 - No OCR for scanned PDFs
 - No amendment precedence or incorporated-reference reconciliation
-- Hosted mode has one shared HTTP Basic credential, not individual accounts, single sign-on, roles, or identity-bound review records
+- The hosted Render deployment is entirely anonymous: no sign-in, privacy, user ownership, roles, tenant isolation, or identity-bound review records
+- Anonymous visitors can read and change all application records and can attempt abuse or resource exhaustion
 - No project deletion, retention workflow, compliance export, or supported data migration interface
 - No approval for CUI, ITAR-controlled, classified, source-selection, or proprietary proposal data
 

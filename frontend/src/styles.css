@@ -53,6 +53,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .security-banner div { display: flex; align-items: baseline; gap: 10px; flex: 1; font-size: 12px; }
 .security-banner strong { text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
 .security-banner__mode { padding: 3px 7px; border: 1px solid #c99a2e; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: .1em; }
+.security-banner--anonymous { min-height: 66px; color: #fff; background: #7a271a; border-bottom-color: #55160f; }
+.security-banner--anonymous .security-banner__icon { display: grid; place-items: center; flex: 0 0 22px; height: 22px; color: #7a271a; background: #fff; border-radius: 50%; font-weight: 900; }
+.security-banner--anonymous div { align-items: flex-start; flex-direction: column; gap: 3px; line-height: 1.45; }
+.security-banner--anonymous strong { font-size: 11px; }
+.security-banner--anonymous .security-banner__mode { border-color: #fff; white-space: nowrap; }
 .global-error { position: relative; padding: 10px 48px 10px 28px; color: #7a271a; background: #fee4e2; border-bottom: 1px solid #fecdca; font-size: 13px; }
 .global-error button { position: absolute; right: 24px; top: 4px; border: 0; background: none; color: inherit; font-size: 22px; }
 
@@ -143,6 +148,8 @@ h1, h2, p { margin-top: 0; }
 .staged-files li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
 .staged-files li span:nth-child(2) { color: var(--slate-700); }
 .staged-files li button { padding: 0; color: var(--slate-700); background: none; border: 0; font-size: 17px; }
+.upload-acknowledgement { margin: 12px 0; padding: 10px; display: flex; align-items: flex-start; gap: 9px; color: #594214; background: var(--gold-100); border: 1px solid #ead58e; border-radius: 5px; font-size: 10px; font-weight: 650; line-height: 1.45; }
+.upload-acknowledgement input { margin: 2px 0 0; flex: 0 0 auto; accent-color: var(--blue-600); }
 .upload-progress { margin-top: 14px; display: flex; align-items: center; gap: 12px; color: var(--slate-700); font-size: 10px; }
 .upload-progress progress { width: 150px; height: 6px; accent-color: var(--blue-600); }
 .upload-message { margin-top: 13px; padding: 9px 11px; border-radius: 5px; }

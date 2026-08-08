@@ -4,6 +4,7 @@ import type { UploadState } from '../types'
 interface DocumentUploadProps {
   state: UploadState
   message: string | null
+  isAnonymous: boolean
   onUpload: (files: File[]) => Promise<void>
 }
 
@@ -13,12 +14,14 @@ function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`
 }
 
-export function DocumentUpload({ state, message, onUpload }: DocumentUploadProps) {
+export function DocumentUpload({ state, message, isAnonymous, onUpload }: DocumentUploadProps) {
   const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [publicDataAcknowledged, setPublicDataAcknowledged] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = (incoming: File[]) => {
+    setPublicDataAcknowledged(false)
     setFiles((current) => {
       const seen = new Set(current.map(fileKey))
       return [...current, ...incoming.filter((file) => !seen.has(fileKey(file)))]
@@ -37,10 +40,11 @@ export function DocumentUpload({ state, message, onUpload }: DocumentUploadProps
   }
 
   const submit = async () => {
-    if (!files.length) return
+    if (!files.length || (isAnonymous && !publicDataAcknowledged)) return
     try {
       await onUpload(files)
       setFiles([])
+      setPublicDataAcknowledged(false)
     } catch {
       // The parent reports the actionable API error and preserves this selection for retry.
     }
@@ -68,7 +72,11 @@ export function DocumentUpload({ state, message, onUpload }: DocumentUploadProps
         <div className="dropzone__mark" aria-hidden="true">⇧</div>
         <div>
           <strong>Drop a solicitation package here</strong>
-          <p>Keep base RFPs, amendments, attachments, and exhibits together.</p>
+          <p>
+            {isAnonymous
+              ? 'Synthetic PUBLIC data only. Files are retained on shared storage and visible to every visitor.'
+              : 'Keep base RFPs, amendments, attachments, and exhibits together.'}
+          </p>
         </div>
         <button className="button button--secondary" type="button" onClick={() => inputRef.current?.click()}>
           Choose documents
@@ -88,7 +96,15 @@ export function DocumentUpload({ state, message, onUpload }: DocumentUploadProps
         <div className="staged-files" aria-live="polite">
           <div className="staged-files__summary">
             <strong>{files.length} {files.length === 1 ? 'file' : 'files'} ready</strong>
-            <button type="button" className="text-button" onClick={() => setFiles([])} disabled={isUploading}>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setFiles([])
+                setPublicDataAcknowledged(false)
+              }}
+              disabled={isUploading}
+            >
               Clear
             </button>
           </div>
@@ -100,7 +116,10 @@ export function DocumentUpload({ state, message, onUpload }: DocumentUploadProps
                 <button
                   type="button"
                   aria-label={`Remove ${file.name}`}
-                  onClick={() => setFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)))}
+                  onClick={() => {
+                    setFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)))
+                    setPublicDataAcknowledged(false)
+                  }}
                   disabled={isUploading}
                 >
                   ×
@@ -108,8 +127,29 @@ export function DocumentUpload({ state, message, onUpload }: DocumentUploadProps
               </li>
             ))}
           </ul>
-          <button className="button button--primary" type="button" onClick={submit} disabled={isUploading}>
-            {isUploading ? 'Uploading securely…' : `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'}`}
+          {isAnonymous && (
+            <label className="upload-acknowledgement">
+              <input
+                type="checkbox"
+                checked={publicDataAcknowledged}
+                onChange={(event) => setPublicDataAcknowledged(event.target.checked)}
+                disabled={isUploading}
+              />
+              <span>
+                I confirm these files contain only synthetic PUBLIC data and understand that
+                anyone can view or change uploads retained on shared storage.
+              </span>
+            </label>
+          )}
+          <button
+            className="button button--primary"
+            type="button"
+            onClick={submit}
+            disabled={isUploading || (isAnonymous && !publicDataAcknowledged)}
+          >
+            {isUploading
+              ? isAnonymous ? 'Uploading to shared storage…' : 'Uploading files…'
+              : `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'}${isAnonymous ? ' to shared storage' : ''}`}
           </button>
         </div>
       )}

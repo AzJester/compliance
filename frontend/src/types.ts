@@ -37,6 +37,15 @@ export interface ProjectDocument {
 }
 
 export type HealthState = 'checking' | 'online' | 'offline'
+export type AccessMode = 'local' | 'authenticated' | 'anonymous'
+
+export interface HealthResponse {
+  status: string
+  host?: string
+  telemetry?: boolean
+  access_mode?: AccessMode
+}
+
 export type UploadState = 'idle' | 'uploading' | 'success' | 'error'
 
 export type SolicitationSection =

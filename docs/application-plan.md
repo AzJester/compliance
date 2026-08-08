@@ -9,7 +9,7 @@ Build a standalone-first application that ingests a complete Department of Defen
 The application will:
 
 - Default to one approved Windows workstation with its web interface bound only to `127.0.0.1`.
-- Permit a separate, explicit single-instance hosted mode for PUBLIC-data demonstrations only; require HTTPS, authentication, exact hosts and origins, and persistent storage.
+- Permit a separate, explicit single-instance hosted mode for PUBLIC/synthetic-data demonstrations only; require HTTPS, an explicit access policy, exact hosts and origins, and persistent storage. The current Render deployment deliberately selects anonymous access.
 - Perform OCR, extraction, search, and model inference inside the approved application boundary without sending documents, prompts, analytics, or telemetry to an external AI or reference service. The current hosted prototype uses deterministic extraction and no model inference.
 - Support searchable and scanned PDF, DOCX, XLSX, PPTX, and nested ZIP packages.
 - Recognize the uniform contract structure described by [FAR 15.204-1](https://www.acquisition.gov/far/15.204-1), including Section L proposal instructions and Section M evaluation factors.
@@ -337,7 +337,7 @@ Expose these endpoints on loopback in the default standalone mode:
 - Reference-pack import and version reporting.
 - Health checks and content-free diagnostics.
 
-The optional hosted mode exposes the same UI and API only behind its configured HTTPS origin, exact trusted hosts, and shared authentication. It remains a single-workspace PUBLIC-data demonstration. Remote access to CUI, ITAR-controlled data, classified information, source-selection information, or proprietary proposal content remains outside the first-release scope.
+The optional hosted mode exposes the same UI and API only through its configured HTTPS origin and exact trusted hosts. Runtime access defaults to shared authentication, but the current Render Blueprint deliberately selects anonymous access. It remains a single-workspace PUBLIC/synthetic-data demonstration. Anyone who reaches the public service can read and change all application records; it provides no privacy, user ownership, authorization, or tenant boundary. Remote access to non-public solicitation material, proposal content, CUI, ITAR-controlled data, classified information, source-selection information, customer data, or proprietary content remains outside the first-release scope.
 
 ## 7. Security boundary
 
@@ -359,7 +359,7 @@ Implement for the standalone controlled-data target:
 - Backup and restoration only to administrator-approved encrypted locations.
 - Diagnostics exports that exclude document content by default.
 
-The hosted PUBLIC-data mode is a separate boundary and is not a CUI or ITAR deployment. It requires fail-closed authentication and network settings, a non-root container, reduced resource limits, persistent single-instance storage, and an approved backup and recovery procedure. Moving the container to a web host does not satisfy NIST, CMMC, export-control, contractual, or classified-system requirements.
+The hosted PUBLIC/synthetic-data mode is a separate boundary and is not a CUI or ITAR deployment. It requires an explicit access policy and fail-closed network settings, a non-root container, reduced resource limits, persistent single-instance storage, and an approved backup and recovery procedure. The current Render Blueprint deliberately selects anonymous access, so every visitor can use the UI and API and repeated requests can cause disclosure, unauthorized changes, storage exhaustion, disruption, or unexpected cost. Exact Host and Origin checks, HTTPS, and intake limits do not create user authorization. Moving the container to a web host does not satisfy NIST, CMMC, export-control, contractual, or classified-system requirements.
 
 The system must not be marketed as automatically providing CMMC certification, NIST compliance, or authorization to handle CUI. Those determinations depend on the complete environment, security plan, organizational controls, contract clauses, configuration, and assessment.
 
