@@ -78,4 +78,46 @@ describe('API error handling', () => {
       expected_updated_at: '2026-08-07T20:00:00Z',
     })
   })
+
+  it('uses the solicitation-detail analyze and atomic apply contracts', async () => {
+    const calls: { url: string; init?: RequestInit }[] = []
+    const analysis = {
+      project_id: 'project 1', run_id: 'run-1', analyzed_at: '2026-08-08T00:00:00Z',
+      input_fingerprint: 'f'.repeat(64), rule_version: '1.0', stale: false,
+      project_updated_at: '2026-08-08T00:00:00Z', profile_updated_at: '2026-08-08T00:00:00Z',
+      profile: { project_id: 'project 1', issuing_office: null, naics_code: null, psc_code: null, set_aside: null, contract_type: null, points_of_contact: [], updated_at: '2026-08-08T00:00:00Z' },
+      fields: [], decisions: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (url.endsWith('/apply')) return new Response(JSON.stringify({
+        project: { id: 'project 1' }, profile: analysis.profile, applied_fields: ['naics_code'],
+        decisions: [], analysis,
+      }), { status: 200 })
+      return new Response(JSON.stringify(analysis), { status: 200 })
+    }))
+
+    await api.getSolicitationDetails('project 1')
+    await api.analyzeSolicitationDetails('project 1')
+    await api.applySolicitationDetails('project 1', {
+      reviewer: 'Synthetic Reviewer',
+      expected_project_updated_at: analysis.project_updated_at,
+      expected_profile_updated_at: analysis.profile_updated_at,
+      run_id: analysis.run_id,
+      approvals: [{ field_key: 'naics_code', candidate_ids: ['candidate/1'] }],
+    })
+
+    expect(calls.map((call) => call.url)).toEqual([
+      '/api/projects/project%201/solicitation-details',
+      '/api/projects/project%201/solicitation-details/analyze',
+      '/api/projects/project%201/solicitation-details/apply',
+    ])
+    expect(calls[1].init?.method).toBe('POST')
+    expect(calls[2].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[2].init?.body))).toMatchObject({
+      reviewer: 'Synthetic Reviewer',
+      approvals: [{ field_key: 'naics_code', candidate_ids: ['candidate/1'] }],
+    })
+  })
 })

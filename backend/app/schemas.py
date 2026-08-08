@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -19,6 +19,7 @@ from .models import (
     RequirementSection,
     ReviewAction,
     Sensitivity,
+    SolicitationField,
     ValidationStatus,
     WorkflowStage,
     WorkflowStatus,
@@ -639,3 +640,129 @@ class ReadinessResponse(BaseModel):
     blocking_reasons: list[str]
     next_action: str | None
     stages: list[StageProgressResponse]
+
+
+class SolicitationProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_id: str
+    issuing_office: str | None
+    naics_code: str | None
+    psc_code: str | None
+    set_aside: str | None
+    contract_type: str | None
+    points_of_contact: list[dict[str, Any]]
+    updated_at: datetime
+
+
+class SolicitationCandidateResponse(BaseModel):
+    id: str
+    field_key: SolicitationField
+    value: str
+    normalized_value: dict[str, Any]
+    document_id: str
+    document_name: str
+    document_classification: DocumentClassification
+    document_sha256: str
+    is_amendment: bool
+    amendment_number: int | None
+    explicit_change: bool
+    source_start: int = Field(ge=0)
+    source_end: int = Field(gt=0)
+    source_locator: str
+    page_number: int | None
+    excerpt: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    confidence_level: Literal["HIGH", "MEDIUM", "LOW"]
+    detection_rationale: str
+    detection_pattern: str
+    applicable: bool
+    needs_input: str | None
+    recommended: bool
+    conflict: bool
+
+
+class SolicitationFieldResponse(BaseModel):
+    field_key: SolicitationField
+    label: str
+    repeatable: bool
+    status: Literal["NOT_FOUND", "DETECTED", "CONFLICT", "NEEDS_INPUT"]
+    conflict: bool
+    recommended_candidate_id: str | None
+    recommended_candidate_ids: list[str]
+    candidates: list[SolicitationCandidateResponse]
+
+
+class SolicitationDecisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    run_id: str
+    candidate_id: str
+    field_key: SolicitationField
+    reviewer: str
+    previous_value: Any
+    applied_value: Any
+    applied_at: datetime
+
+
+class SolicitationAnalysisResponse(BaseModel):
+    project_id: str
+    run_id: str
+    analyzed_at: datetime
+    input_fingerprint: str
+    rule_version: str
+    stale: bool
+    project_updated_at: datetime
+    profile_updated_at: datetime
+    profile: SolicitationProfileResponse
+    fields: list[SolicitationFieldResponse]
+    decisions: list[SolicitationDecisionResponse]
+
+
+class SolicitationApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_key: SolicitationField
+    candidate_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_candidate_ids(self) -> SolicitationApproval:
+        if len(set(self.candidate_ids)) != len(self.candidate_ids):
+            raise ValueError("candidate_ids cannot contain duplicates")
+        if self.field_key != SolicitationField.POINTS_OF_CONTACT and len(self.candidate_ids) != 1:
+            raise ValueError("Only points_of_contact supports multiple candidate IDs")
+        return self
+
+
+class SolicitationApplyRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    reviewer: str = Field(min_length=1, max_length=150)
+    expected_project_updated_at: datetime
+    expected_profile_updated_at: datetime
+    run_id: str = Field(min_length=1, max_length=36)
+    approvals: list[SolicitationApproval] = Field(min_length=1, max_length=9)
+
+    @field_validator("expected_project_updated_at", "expected_profile_updated_at")
+    @classmethod
+    def require_solicitation_expected_offset(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expected timestamps must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def validate_approval_fields(self) -> SolicitationApplyRequest:
+        fields = [approval.field_key for approval in self.approvals]
+        if len(set(fields)) != len(fields):
+            raise ValueError("Each field_key can appear only once")
+        return self
+
+
+class SolicitationApplyResponse(BaseModel):
+    project: ProjectResponse
+    profile: SolicitationProfileResponse
+    applied_fields: list[SolicitationField]
+    decisions: list[SolicitationDecisionResponse]
+    analysis: SolicitationAnalysisResponse

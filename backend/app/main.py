@@ -13,10 +13,17 @@ from sqlalchemy.orm import Session
 from .config import Settings
 from .database import create_database, get_session, initialize_database
 from .ingestion import IngestionError, prepare_uploads, store_documents
-from .models import Document, DocumentClassification, Project, ProjectWorkflow
+from .models import (
+    Document,
+    DocumentClassification,
+    Project,
+    ProjectWorkflow,
+    SolicitationProfile,
+)
 from .requirements_api import router as requirements_router
 from .schemas import DocumentResponse, HealthResponse, ProjectCreate, ProjectResponse
 from .security import LocalRequestMiddleware
+from .solicitation_details import router as solicitation_details_router
 from .workflow_api import router as workflow_router
 
 
@@ -70,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_project(payload: ProjectCreate, session: Session = Depends(get_session)) -> Project:
         project = Project(**payload.model_dump())
         project.workflow = ProjectWorkflow()
+        project.solicitation_profile = SolicitationProfile()
         session.add(project)
         session.commit()
         session.refresh(project)
@@ -138,6 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application.include_router(requirements_router)
     application.include_router(workflow_router)
+    application.include_router(solicitation_details_router)
 
     if frontend_dist.is_dir():
         application.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

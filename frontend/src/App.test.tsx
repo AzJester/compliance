@@ -228,6 +228,7 @@ describe('App', () => {
       sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       status: 'STORED',
       extraction_count: 0,
+      classification: 'BASE_SOLICITATION',
     }
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -269,6 +270,7 @@ describe('App', () => {
     const acknowledgement = screen.getByRole('checkbox', {
       name: /only synthetic PUBLIC data.*anyone can view or change uploads retained on shared storage/i,
     })
+    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(acknowledgement)
     expect(uploadButton).toBeEnabled()
     await user.click(uploadButton)
@@ -290,6 +292,7 @@ describe('App', () => {
       extraction_count: 14,
       source_archive: null,
       error: null,
+      classification: 'BASE_SOLICITATION',
     }
     let documentReads = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -301,6 +304,7 @@ describe('App', () => {
       if (url === `/api/projects/${project.id}/documents` && method === 'POST') {
         expect(init?.body).toBeInstanceOf(FormData)
         expect((init?.body as FormData).getAll('files')).toHaveLength(1)
+        expect((init?.body as FormData).get('classification')).toBe('BASE_SOLICITATION')
         return jsonResponse({ documents: [uploaded] }, 201)
       }
       if (url === `/api/projects/${project.id}/documents`) {
@@ -319,13 +323,14 @@ describe('App', () => {
     const file = new File(['rfp content'], uploaded.name, { type: uploaded.content_type! })
     await user.upload(documentUploadInput(), file)
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
 
     const table = await screen.findByRole('table')
     expect(within(table).getByText(uploaded.name)).toBeInTheDocument()
     expect(within(table).getByTitle(uploaded.sha256)).toHaveAttribute('title', uploaded.sha256)
     expect(within(table).getByText('Stored')).toBeInTheDocument()
-    expect(screen.getByText(/1 file was added to the manifest/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 file was added as base solicitation/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /^refresh$/i }))
     await waitFor(() => expect(documentReads).toBeGreaterThan(1))
@@ -370,6 +375,7 @@ describe('App', () => {
     await openSolicitationFiles(user)
 
     await user.upload(documentUploadInput(), new File(['alpha'], staleDocument.name, { type: 'application/pdf' }))
+    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       `/api/projects/${project.id}/documents`,
@@ -425,6 +431,7 @@ describe('App', () => {
     await openSolicitationFiles(user)
 
     await user.upload(documentUploadInput(), new File(['new'], uploaded.name, { type: 'application/pdf' }))
+    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
     expect(await screen.findByText(uploaded.name)).toBeInTheDocument()
 

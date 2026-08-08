@@ -148,6 +148,17 @@ h1, h2, p { margin-top: 0; }
 .staged-files li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
 .staged-files li span:nth-child(2) { color: var(--slate-700); }
 .staged-files li button { padding: 0; color: var(--slate-700); background: none; border: 0; font-size: 17px; }
+.upload-role { margin: 13px 0; padding: 13px; display: grid; gap: 11px; background: #fff; border: 1px solid var(--slate-300); border-radius: 6px; }
+.upload-role__heading { display: grid; gap: 3px; }
+.upload-role__heading strong { color: var(--navy-900); font-size: 11px; }
+.upload-role__heading span,
+.upload-role > p { margin: 0; color: var(--slate-700); font-size: 9px; line-height: 1.5; }
+.upload-role__fields { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(220px, 1.2fr); gap: 10px; }
+.upload-role__fields label { display: grid; gap: 5px; color: var(--slate-700); font-size: 9px; font-weight: 800; }
+.upload-role__fields label > span { font-weight: 500; }
+.upload-role__fields select,
+.upload-role__fields input { width: 100%; min-height: 40px; padding: 8px 9px; color: var(--slate-900); background: #fff; border: 1px solid var(--slate-300); border-radius: 5px; font-size: 12px; }
+.upload-role > p { padding: 8px 10px; color: #694b08; background: #fff9e8; border-radius: 4px; }
 .upload-acknowledgement { margin: 12px 0; padding: 10px; display: flex; align-items: flex-start; gap: 9px; color: #594214; background: var(--gold-100); border: 1px solid #ead58e; border-radius: 5px; font-size: 10px; font-weight: 650; line-height: 1.45; }
 .upload-acknowledgement input { margin: 2px 0 0; flex: 0 0 auto; accent-color: var(--blue-600); }
 .upload-progress { margin-top: 14px; display: flex; align-items: center; gap: 12px; color: var(--slate-700); font-size: 10px; }
@@ -751,6 +762,7 @@ code { font-size: 11px; }
   .project-wizard__actions .button { flex: 1; }
   .help-panel { padding: 20px; }
   .panel { padding: 18px; }
+  .upload-role__fields { grid-template-columns: 1fr; }
   .table-wrap { margin-inline: 0; }
   .welcome-state { margin: 5vh auto; }
   .welcome-state > p { font-size: 15px; }

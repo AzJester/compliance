@@ -192,6 +192,18 @@ class CDRLAdjudicationStatus(StrEnum):
     WAIVED = "WAIVED"
 
 
+class SolicitationField(StrEnum):
+    TITLE = "title"
+    SOLICITATION_NUMBER = "solicitation_number"
+    AGENCY = "agency"
+    DUE_AT = "due_at"
+    NAICS_CODE = "naics_code"
+    PSC_CODE = "psc_code"
+    SET_ASIDE = "set_aside"
+    CONTRACT_TYPE = "contract_type"
+    POINTS_OF_CONTACT = "points_of_contact"
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -218,6 +230,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     workflow: Mapped[ProjectWorkflow | None] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
+    solicitation_profile: Mapped[SolicitationProfile | None] = relationship(
         back_populates="project", cascade="all, delete-orphan", uselist=False
     )
 
@@ -517,6 +532,143 @@ class DocumentProfile(Base):
     document: Mapped[Document] = relationship(back_populates="workflow_profile")
 
     __table_args__ = (Index("ix_document_profile_project_class", "project_id", "classification"),)
+
+
+class SolicitationProfile(Base):
+    """Approved extended solicitation metadata that does not fit the legacy project row."""
+
+    __tablename__ = "solicitation_profiles"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    issuing_office: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    naics_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    psc_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    set_aside: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    contract_type: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    points_of_contact: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, server_default="[]"
+    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    project: Mapped[Project] = relationship(back_populates="solicitation_profile")
+
+
+class SolicitationAnalysisRun(Base):
+    """Immutable evidence-backed metadata analysis for one exact input set."""
+
+    __tablename__ = "solicitation_analysis_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    rule_version: Mapped[str] = mapped_column(String(50))
+    analyzed_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+    candidates: Mapped[list[SolicitationCandidate]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    decisions: Mapped[list[SolicitationDecision]] = relationship(back_populates="run")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "input_fingerprint", name="uq_solicitation_run_project_input"
+        ),
+        Index("ix_solicitation_run_project_analyzed", "project_id", "analyzed_at", "id"),
+    )
+
+
+class SolicitationCandidate(Base):
+    """A normalized value tied to an exact, immutable source-text range."""
+
+    __tablename__ = "solicitation_candidates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("solicitation_analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    field_key: Mapped[SolicitationField] = mapped_column(
+        Enum(SolicitationField, native_enum=False), index=True
+    )
+    value: Mapped[str] = mapped_column(String(4_000))
+    normalized_value: Mapped[dict[str, Any]] = mapped_column(JSON)
+    document_name: Mapped[str] = mapped_column(String(500))
+    document_sha256: Mapped[str] = mapped_column(String(64))
+    document_text_sha256: Mapped[str] = mapped_column(String(64))
+    document_classification: Mapped[DocumentClassification] = mapped_column(
+        Enum(DocumentClassification, native_enum=False)
+    )
+    is_amendment: Mapped[bool] = mapped_column(Boolean, default=False)
+    amendment_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    explicit_change: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_start: Mapped[int] = mapped_column(Integer)
+    source_end: Mapped[int] = mapped_column(Integer)
+    source_locator: Mapped[str] = mapped_column(String(2_500))
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excerpt: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+    confidence_level: Mapped[str] = mapped_column(String(10))
+    detection_rationale: Mapped[str] = mapped_column(String(1_000))
+    detection_pattern: Mapped[str] = mapped_column(String(150))
+    applicable: Mapped[bool] = mapped_column(Boolean, default=True)
+    needs_input: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    candidate_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+    run: Mapped[SolicitationAnalysisRun] = relationship(back_populates="candidates")
+    document: Mapped[Document] = relationship()
+    decisions: Mapped[list[SolicitationDecision]] = relationship(back_populates="candidate")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "candidate_fingerprint", name="uq_candidate_run_fingerprint"),
+        CheckConstraint("source_start >= 0", name="ck_solicitation_candidate_source_start"),
+        CheckConstraint("source_end > source_start", name="ck_solicitation_candidate_source_end"),
+        CheckConstraint(
+            "confidence >= 0.0 AND confidence <= 1.0",
+            name="ck_solicitation_candidate_confidence",
+        ),
+        Index("ix_solicitation_candidate_run_field", "run_id", "field_key", "id"),
+    )
+
+
+class SolicitationDecision(Base):
+    """Audit record for each approved candidate application."""
+
+    __tablename__ = "solicitation_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("solicitation_analysis_runs.id", ondelete="RESTRICT"), index=True
+    )
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("solicitation_candidates.id", ondelete="RESTRICT"), index=True
+    )
+    field_key: Mapped[SolicitationField] = mapped_column(
+        Enum(SolicitationField, native_enum=False), index=True
+    )
+    reviewer: Mapped[str] = mapped_column(String(150))
+    previous_value: Mapped[Any] = mapped_column(JSON, nullable=True)
+    applied_value: Mapped[Any] = mapped_column(JSON, nullable=True)
+    applied_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+    run: Mapped[SolicitationAnalysisRun] = relationship(back_populates="decisions")
+    candidate: Mapped[SolicitationCandidate] = relationship(back_populates="decisions")
+
+    __table_args__ = (
+        Index("ix_solicitation_decision_project_applied", "project_id", "applied_at", "id"),
+    )
 
 
 class IntakeVerification(Base):
