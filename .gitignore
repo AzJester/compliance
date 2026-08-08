@@ -1,0 +1,72 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python bytecode and environments
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# Python packaging, test, and analysis output
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node and frontend output
+node_modules/
+.vite/
+.eslintcache
+*.tsbuildinfo
+coverage/
+test-results/
+playwright-report/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local application data and generated artifacts
+.data/
+.compliance-data/
+.local/
+local-data/
+imports/
+exports/
+logs/
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# IDE and editor metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary files
+.cache/
+tmp/
+temp/
+*.tmp

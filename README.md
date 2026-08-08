@@ -2,9 +2,26 @@
 
 <!-- markdownlint-disable MD013 -->
 
-DoD RFP Compliance is a planned standalone Windows application for turning Department of Defense solicitation packages into a traceable requirements inventory and comparing those requirements with a proposal response.
+DoD RFP Compliance is a standalone, local-first Windows application for turning Department of Defense solicitation packages into a traceable requirements inventory and comparing those requirements with a proposal response.
 
 The product is intended to help proposal, contracts, and compliance teams find omissions, conflicts, and submission risks while preserving a human approval step for every final compliance determination.
+
+## Current Phase 1 foundation
+
+The first working vertical slice now includes:
+
+- A loopback-only FastAPI service with SQLite project persistence.
+- Project creation with public, CUI, and ITAR sensitivity labels.
+- Multi-file PDF, DOCX, XLSX, PPTX, and recursive ZIP intake.
+- SHA-256 content-addressed storage with per-occurrence package provenance.
+- Local text extraction and scanned-PDF `NEEDS_OCR` detection.
+- ZIP and Office-container defenses for traversal, encryption, active content, unsafe compression, excessive size, and excessive nesting.
+- A React dashboard for project selection, document upload, and manifest review.
+- Backend and frontend automated tests plus read-only GitHub Actions validation.
+
+This milestone establishes a local intake prototype with integrity hashes and package provenance. It is not yet approved for real CUI or ITAR-controlled data. Requirement extraction, amendments, Section L/M registers, CDRL parsing, proposal crosswalking, exports, and deployment-control validation remain subsequent phases.
+
+See the [development guide](docs/development.md) to run and validate the application locally.
 
 ## Planned capabilities
 
@@ -17,7 +34,7 @@ The product is intended to help proposal, contracts, and compliance teams find o
 
 ## Standalone security model
 
-The first release is planned as a single-user local web application running only on an approved Windows workstation. Document extraction, search, and model inference remain local; the application requires no cloud service and sends no document content or telemetry off the workstation.
+The first release is a single-user local web application running only on an approved Windows workstation. Document extraction, search, and future model inference remain local; the application requires no cloud service and sends no document content or telemetry off the workstation.
 
 This architecture may support a CUI/ITAR-controlled environment, but installing the application does not itself make a workstation or organization compliant with NIST SP 800-171, CMMC, export-control rules, or contractual security obligations. The full system boundary, configuration, policies, and operating environment must be assessed and authorized by the responsible organization.
 
