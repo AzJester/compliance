@@ -1,9 +1,9 @@
 export function SecurityBanner() {
   return (
-    <aside className="security-banner" aria-label="Local security notice">
+    <aside className="security-banner" aria-label="Data security notice">
       <span className="security-banner__icon" aria-hidden="true">◆</span>
       <div>
-        <strong>Local processing boundary</strong>
+        <strong>PUBLIC-data boundary</strong>
         <span>
           Public prototype only. Do not import CUI, ITAR-controlled, classified,
           source-selection, or proprietary proposal data.

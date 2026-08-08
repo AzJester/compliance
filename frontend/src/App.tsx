@@ -263,11 +263,11 @@ export function App() {
       <header className="topbar">
         <div className="brand" aria-label="RFP Compliance Workspace">
           <span className="brand__mark" aria-hidden="true">RC</span>
-          <span><strong>RFP Compliance</strong><small>Secure intake workspace</small></span>
+          <span><strong>RFP Compliance</strong><small>PUBLIC-data intake workspace</small></span>
         </div>
         <div className={`health health--${health}`} role="status">
           <span aria-hidden="true" />
-          {health === 'checking' ? 'Checking local service' : health === 'online' ? 'Local service online' : 'Local service unavailable'}
+          {health === 'checking' ? 'Checking application service' : health === 'online' ? 'Application service online' : 'Application service unavailable'}
         </div>
       </header>
 

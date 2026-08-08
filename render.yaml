@@ -1,0 +1,50 @@
+previews:
+  generation: off
+
+services:
+  - type: web
+    name: dod-rfp-compliance
+    runtime: docker
+    plan: starter
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    maxShutdownDelaySeconds: 120
+    numInstances: 1
+    domains:
+      - compliance.insightfuldefense.com
+    disk:
+      name: compliance-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: COMPLIANCE_MODE
+        value: web
+      - key: COMPLIANCE_HOST
+        value: 0.0.0.0
+      - key: COMPLIANCE_DATA_DIR
+        value: /var/data
+      - key: COMPLIANCE_TRUST_PROXY_HEADERS
+        value: "true"
+      - key: COMPLIANCE_ALLOWED_ORIGINS
+        value: https://compliance.insightfuldefense.com
+      - key: COMPLIANCE_TRUSTED_HOSTS
+        value: compliance.insightfuldefense.com
+      - key: COMPLIANCE_AUTH_USERNAME
+        sync: false
+      - key: COMPLIANCE_AUTH_PASSWORD
+        generateValue: true
+      - key: COMPLIANCE_MAX_UPLOAD_FILES
+        value: "10"
+      - key: COMPLIANCE_MAX_FILE_BYTES
+        value: "20971520"
+      - key: COMPLIANCE_MAX_REQUEST_BYTES
+        value: "52428800"
+      - key: COMPLIANCE_MAX_ARCHIVE_ENTRIES
+        value: "250"
+      - key: COMPLIANCE_MAX_ARCHIVE_UNCOMPRESSED_BYTES
+        value: "104857600"
+      - key: COMPLIANCE_MAX_ARCHIVE_DEPTH
+        value: "3"
+      - key: COMPLIANCE_MAX_COMPRESSION_RATIO
+        value: "100"

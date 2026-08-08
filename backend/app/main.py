@@ -21,6 +21,14 @@ from .security import LocalRequestMiddleware
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings.from_env()
+    frontend_dist = resolved_settings.frontend_dir or (
+        Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    )
+    if resolved_settings.web_enabled and not frontend_dist.is_dir():
+        raise RuntimeError(
+            "Web mode requires a built frontend directory. Run the frontend build or set "
+            "COMPLIANCE_FRONTEND_DIR."
+        )
     engine, session_factory = create_database(resolved_settings.database_path)
 
     @asynccontextmanager
@@ -43,7 +51,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.add_middleware(LocalRequestMiddleware, settings=resolved_settings)
 
     @application.get("/api/health", response_model=HealthResponse)
-    def health() -> HealthResponse:
+    def health(session: Session = Depends(get_session)) -> HealthResponse:
+        session.execute(select(Project.id).limit(1)).first()
         return HealthResponse(status="ok", host=resolved_settings.host, telemetry=False)
 
     @application.post(
@@ -104,7 +113,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application.include_router(requirements_router)
 
-    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():
         application.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
@@ -115,10 +123,17 @@ app = create_app()
 
 
 def run() -> None:
-    """Run the workstation-local API using loopback-only defaults."""
+    """Run in local mode by default or explicit, validated web mode."""
 
-    settings = Settings.from_env()
-    uvicorn.run("backend.app.main:app", host=settings.host, port=settings.port, reload=False)
+    settings: Settings = app.state.settings
+    uvicorn.run(
+        app,
+        host=settings.host,
+        port=settings.port,
+        reload=False,
+        proxy_headers=False,
+        server_header=False,
+    )
 
 
 if __name__ == "__main__":
