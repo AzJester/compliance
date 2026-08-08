@@ -1,0 +1,172 @@
+.manifest-callout {
+  margin: 0 0 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--warning-border, #d7a52a);
+  border-radius: 0.65rem;
+  background: var(--warning-soft, #fff8df);
+  color: var(--text, #18202a);
+}
+
+.manifest-table td {
+  vertical-align: top;
+}
+
+.manifest-file-meta,
+.manifest-table td small,
+.document-profile-editor small {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--text-muted, #5d6875);
+}
+
+.classification-pill {
+  display: inline-flex;
+  max-width: 15rem;
+  padding: 0.28rem 0.55rem;
+  border: 1px solid var(--border, #d7dce1);
+  border-radius: 999px;
+  background: var(--surface-subtle, #f4f6f8);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.classification-pill--unclassified {
+  border-color: #d7a52a;
+  background: #fff8df;
+  color: #76570d;
+}
+
+.classification-pill--proposal_volume {
+  border-color: #6c77c5;
+  background: #f0f1ff;
+  color: #343f91;
+}
+
+.document-profile-editor {
+  display: grid;
+  min-width: min(19rem, 80vw);
+  gap: 0.65rem;
+}
+
+.document-profile-editor label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.document-profile-editor label > span {
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.document-profile-editor select,
+.document-profile-editor input,
+.document-profile-editor textarea {
+  width: 100%;
+}
+
+.document-profile-actions,
+.manifest-row-actions,
+.document-preview__paging {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.manifest-row-actions {
+  min-width: 7.5rem;
+}
+
+.hash-value {
+  display: block;
+  overflow: hidden;
+  max-width: 12rem;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-button {
+  margin-top: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, #1b5a8a);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.15rem;
+}
+
+.document-preview {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border, #d7dce1);
+  border-radius: 0.75rem;
+  background: var(--surface-subtle, #f7f8fa);
+}
+
+.document-preview__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.document-preview__header h3,
+.document-preview__header p {
+  margin: 0.2rem 0 0;
+}
+
+.document-preview pre {
+  overflow: auto;
+  max-height: 30rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--border, #d7dce1);
+  border-radius: 0.5rem;
+  background: var(--surface, #fff);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .manifest-table thead {
+    display: none;
+  }
+
+  .manifest-table,
+  .manifest-table tbody,
+  .manifest-table tr,
+  .manifest-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .manifest-table tr {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border, #d7dce1);
+  }
+
+  .manifest-table td {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .manifest-table td::before {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--text-muted, #5d6875);
+    content: attr(data-label);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .manifest-row-actions {
+    flex-direction: row;
+  }
+}

@@ -49,6 +49,8 @@ Duplicate document occurrences remain visible in the document manifest for packa
 
 The CDRL register preserves the available DD Form 1423 header fields (Blocks A–F) and item fields (Blocks 1–18), including full Block 14 distribution information and Block 16 remarks or DID tailoring. Values are retained as source text so leading zeros, schedules, copy counts, and contractual wording are not changed by type coercion.
 
+Readiness treats each active CDRL as a separate human-review gate. A complete, current record must be marked reviewed; an incomplete record requires an explicit reviewer waiver with a nonblank reason. Source or document-role changes make earlier adjudication stale. Records classified **Reference only** remain available as context but do not create active requirements or count toward readiness.
+
 Missing or ambiguous fields remain empty and require human review. The rules engine does not infer a DID, delivery date, approval code, distribution statement, or other contractual value that is not present in the extracted source.
 
 Colon-delimited labels and tab-separated label/value cells are recognized. To keep hostile or malformed documents from producing unbounded API and browser payloads, one CDRL source span is capped at 32,000 characters and is explicitly marked as source-capped and incomplete when that limit is reached.
@@ -73,7 +75,7 @@ Each review save also carries the requirement version the reviewer loaded. If an
 - Compound obligations are split only when a repeated mandatory term makes the boundary sufficiently clear.
 - Source page coordinates, table-cell geometry, OCR, amendment precedence, incorporated-reference retrieval, and classified-document handling are not yet implemented.
 - Requirement confidence is a rules-engine score, not a probability or a model guarantee.
-- The register does not yet compare requirements with proposal evidence or determine compliance.
+- The crosswalk compares validated requirements with candidate proposal evidence, but every coverage finding still requires human verification and does not constitute legal or contracting-officer approval.
 - This prototype is not approved for real CUI, ITAR-controlled technical data, classified material, source-selection information, or proprietary customer proposals.
 
 Human review of the complete solicitation package remains mandatory.

@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { api } from './api/client'
+import { HelpGlossary } from './components/HelpGlossary'
+import { NewProjectForm } from './components/NewProjectForm'
 import { ProjectOverview } from './components/ProjectOverview'
 import { ProjectSidebar } from './components/ProjectSidebar'
 import { SecurityBanner } from './components/SecurityBanner'
@@ -16,6 +18,10 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
 }
 
+function projectFromUrl() {
+  return new URLSearchParams(window.location.search).get('project')
+}
+
 export function App() {
   const [health, setHealth] = useState<HealthState>('checking')
   const [accessMode, setAccessMode] = useState<AccessMode | 'unknown'>('unknown')
@@ -26,6 +32,10 @@ export function App() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(true)
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+  const [isProjectWizardOpen, setIsProjectWizardOpen] = useState(false)
+  const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [projectError, setProjectError] = useState<string | null>(null)
   const [documentError, setDocumentError] = useState<string | null>(null)
@@ -34,9 +44,10 @@ export function App() {
   const selectedIdRef = useRef<string | null>(null)
   const selectionEpochRef = useRef(0)
   const documentRequestRef = useRef(0)
+  const mainRef = useRef<HTMLElement>(null)
   const [selectionRetry, setSelectionRetry] = useState(0)
 
-  const transitionToProject = useCallback((projectId: string) => {
+  const transitionToProject = useCallback((projectId: string, stage = 'setup') => {
     if (selectedIdRef.current === projectId) return
     selectedIdRef.current = projectId
     selectionEpochRef.current += 1
@@ -49,6 +60,11 @@ export function App() {
     setUploadState('idle')
     setUploadMessage(null)
     setIsLoadingDocuments(true)
+
+    const url = new URL(window.location.href)
+    url.searchParams.set('project', projectId)
+    url.searchParams.set('stage', stage)
+    window.history.replaceState(window.history.state, '', url)
   }, [])
 
   const clearSelection = useCallback(() => {
@@ -63,6 +79,10 @@ export function App() {
     setUploadState('idle')
     setUploadMessage(null)
     setIsLoadingDocuments(false)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('project')
+    url.searchParams.delete('stage')
+    window.history.replaceState(window.history.state, '', url)
   }, [])
 
   const retrySelection = useCallback(() => {
@@ -97,8 +117,13 @@ export function App() {
       )
       if (projectResult.status === 'fulfilled') {
         setProjects(projectResult.value)
-        if (selectedIdRef.current === null && projectResult.value[0]) {
-          transitionToProject(projectResult.value[0].id)
+        if (selectedIdRef.current === null && projectResult.value.length > 0) {
+          const requestedProject = projectFromUrl()
+          const initialProject = projectResult.value.find((item) => item.id === requestedProject) ?? projectResult.value[0]
+          const requestedStage = requestedProject === initialProject.id
+            ? new URLSearchParams(window.location.search).get('stage') ?? 'setup'
+            : 'setup'
+          transitionToProject(initialProject.id, requestedStage)
         }
       } else {
         setWorkspaceError(errorMessage(projectResult.reason, 'Unable to load projects.'))
@@ -213,6 +238,8 @@ export function App() {
       setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)])
       transitionToProject(project.id)
       setSelectedProject(project)
+      setIsProjectWizardOpen(false)
+      setIsProjectMenuOpen(false)
     } catch (error) {
       const message = errorMessage(error, 'Unable to create project.')
       setWorkspaceError(message)
@@ -262,20 +289,41 @@ export function App() {
     }
   }
 
+  const focusWorkspace = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    mainRef.current?.focus()
+  }
+
   const activeProject = selectedProject?.id === selectedId ? selectedProject : null
   const isAnonymous = accessMode === 'anonymous'
 
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">Skip to workspace</a>
+      <a className="skip-link" href="#main-content" onClick={focusWorkspace}>Skip to workspace</a>
       <header className="topbar">
-        <div className="brand" aria-label="RFP Compliance Workspace">
-          <span className="brand__mark" aria-hidden="true">RC</span>
-          <span><strong>RFP Compliance</strong><small>PUBLIC-data intake workspace</small></span>
+        <div className="topbar__left">
+          <button
+            className="topbar__projects-button"
+            type="button"
+            aria-label="Open project menu"
+            aria-expanded={isProjectMenuOpen}
+            onClick={() => setIsProjectMenuOpen(true)}
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
+          <div className="brand" aria-label="RFP Compliance Workspace">
+            <span className="brand__mark" aria-hidden="true">RC</span>
+            <span><strong>RFP Compliance</strong><small>Guided compliance workspace</small></span>
+          </div>
         </div>
-        <div className={`health health--${health}`} role="status">
-          <span aria-hidden="true" />
-          {health === 'checking' ? 'Checking application service' : health === 'online' ? 'Application service online' : 'Application service unavailable'}
+        <div className="topbar__actions">
+          <button className="topbar__help" type="button" onClick={() => setIsHelpOpen(true)}>
+            <span aria-hidden="true">?</span> Help
+          </button>
+          <div className={`health health--${health}`} role="status">
+            <span aria-hidden="true" />
+            {health === 'checking' ? 'Checking service' : health === 'online' ? 'Service online' : 'Service unavailable'}
+          </div>
         </div>
       </header>
 
@@ -288,17 +336,20 @@ export function App() {
         </div>
       )}
 
-      <div className="workspace">
+      <div className={`workspace${isSidebarCollapsed ? ' workspace--sidebar-collapsed' : ''}`}>
         <ProjectSidebar
           projects={projects}
           selectedId={selectedId}
           isLoading={isLoadingProjects}
-          isCreating={isCreating}
-          onSelect={transitionToProject}
-          onCreate={createProject}
+          isOpen={isProjectMenuOpen}
+          isCollapsed={isSidebarCollapsed}
+          onSelect={(projectId) => transitionToProject(projectId)}
+          onCreateRequest={() => setIsProjectWizardOpen(true)}
+          onClose={() => setIsProjectMenuOpen(false)}
+          onToggleCollapsed={() => setIsSidebarCollapsed((current) => !current)}
         />
 
-        <main id="main-content" className="main-content">
+        <main id="main-content" className="main-content" ref={mainRef} tabIndex={-1}>
           {activeProject ? (
             <ProjectOverview
               key={activeProject.id}
@@ -311,6 +362,10 @@ export function App() {
               isAnonymous={isAnonymous}
               onUpload={uploadDocuments}
               onRefresh={() => void loadDocuments(activeProject.id)}
+              onProjectUpdated={(project) => {
+                setSelectedProject(project)
+                setProjects((current) => current.map((item) => item.id === project.id ? project : item))
+              }}
             />
           ) : projectError && selectedId ? (
             <section className="project-load-error" aria-labelledby="project-load-error-title">
@@ -319,12 +374,8 @@ export function App() {
               <h1 id="project-load-error-title">Unable to open project</h1>
               <p role="alert">{projectError}</p>
               <div className="project-load-error__actions">
-                <button className="button button--primary" type="button" onClick={retrySelection}>
-                  Retry
-                </button>
-                <button className="button button--secondary" type="button" onClick={clearSelection}>
-                  Back to project list
-                </button>
+                <button className="button button--primary" type="button" onClick={retrySelection}>Retry</button>
+                <button className="button button--secondary" type="button" onClick={clearSelection}>Back to project list</button>
               </div>
             </section>
           ) : isLoadingProjects || selectedId ? (
@@ -336,25 +387,32 @@ export function App() {
             <section className="welcome-state">
               <div className="welcome-state__mark" aria-hidden="true">RFP</div>
               <div className="section-kicker">Ready for intake</div>
-              <h1>
-                {isAnonymous
-                  ? 'Build a shared compliance record'
-                  : 'Build a defensible compliance record'}
-              </h1>
+              <h1>{isAnonymous ? 'Build a shared compliance record' : 'Build a traceable compliance record'}</h1>
               <p>
                 {isAnonymous
-                  ? 'Create a shared public-demo project to register a synthetic solicitation package and prepare its requirements for review.'
-                  : 'Create a project to register a solicitation package, preserve source integrity, and prepare every requirement for traceable review.'}
+                  ? 'Create a public-demo project and follow a guided path from synthetic solicitation files to review-ready compliance findings.'
+                  : 'Create a project and follow a guided path from solicitation intake to review-ready compliance findings.'}
               </p>
               <ol>
-                <li><span>1</span>Create a project record</li>
-                <li><span>2</span>Import the RFP, amendments, and attachments</li>
-                <li><span>3</span>Validate the document manifest before extraction</li>
+                <li><span>1</span><div><strong>Create a project</strong><small>Capture the opportunity and deadline</small></div></li>
+                <li><span>2</span><div><strong>Verify the package</strong><small>Check files, amendments, and versions</small></div></li>
+                <li><span>3</span><div><strong>Review compliance</strong><small>Resolve requirements and evidence</small></div></li>
               </ol>
+              <button className="button button--primary welcome-state__cta" type="button" onClick={() => setIsProjectWizardOpen(true)}>
+                Create your first project <span aria-hidden="true">→</span>
+              </button>
             </section>
           )}
         </main>
       </div>
+
+      <NewProjectForm
+        isOpen={isProjectWizardOpen}
+        isSubmitting={isCreating}
+        onCancel={() => setIsProjectWizardOpen(false)}
+        onCreate={createProject}
+      />
+      <HelpGlossary isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   )
 }

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,10 +13,11 @@ from sqlalchemy.orm import Session
 from .config import Settings
 from .database import create_database, get_session, initialize_database
 from .ingestion import IngestionError, prepare_uploads, store_documents
-from .models import Document, Project
+from .models import Document, DocumentClassification, Project, ProjectWorkflow
 from .requirements_api import router as requirements_router
 from .schemas import DocumentResponse, HealthResponse, ProjectCreate, ProjectResponse
 from .security import LocalRequestMiddleware
+from .workflow_api import router as workflow_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def create_project(payload: ProjectCreate, session: Session = Depends(get_session)) -> Project:
         project = Project(**payload.model_dump())
+        project.workflow = ProjectWorkflow()
         session.add(project)
         session.commit()
         session.refresh(project)
@@ -92,10 +94,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def upload_documents(
         project_id: str,
         files: list[UploadFile] = File(...),
+        classification: DocumentClassification = Form(DocumentClassification.UNCLASSIFIED),
+        volume_name: str | None = Form(default=None, max_length=250),
+        classification_notes: str | None = Form(default=None, max_length=2_000),
         session: Session = Depends(get_session),
     ) -> list[Document]:
         if session.get(Project, project_id) is None:
             raise HTTPException(status_code=404, detail="Project not found.")
+        if classification == DocumentClassification.PROPOSAL_VOLUME and not (
+            volume_name and volume_name.strip()
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="volume_name is required for proposal-volume uploads.",
+            )
         try:
             prepared = await prepare_uploads(files, resolved_settings)
             return store_documents(
@@ -103,6 +115,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 project_id=project_id,
                 prepared=prepared,
                 settings=resolved_settings,
+                classification=classification,
+                volume_name=volume_name.strip() if volume_name else None,
+                classification_notes=(
+                    classification_notes.strip() if classification_notes else None
+                ),
             )
         except IngestionError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
@@ -120,6 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     application.include_router(requirements_router)
+    application.include_router(workflow_router)
 
     if frontend_dist.is_dir():
         application.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

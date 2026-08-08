@@ -5,11 +5,22 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import Request
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, literal, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
-from .models import Base
+from .models import (
+    Base,
+    Document,
+    DocumentClassification,
+    DocumentProfile,
+    Project,
+    ProjectWorkflow,
+    WorkflowStage,
+    WorkflowStatus,
+    utc_now,
+)
 
 
 def create_database(database_path: Path) -> tuple[Engine, sessionmaker[Session]]:
@@ -36,7 +47,45 @@ def create_database(database_path: Path) -> tuple[Engine, sessionmaker[Session]]
 
 
 def initialize_database(engine: Engine) -> None:
+    """Create missing tables without rewriting existing SQLite data.
+
+    Workflow features use additive tables linked to the unchanged core project and
+    document tables. SQLAlchemy's create-all operation plus conflict-safe default
+    rows is therefore the idempotent migration path for databases created by earlier
+    releases.
+    """
+
     Base.metadata.create_all(engine)
+    now = utc_now()
+    workflow_defaults = select(
+        Project.id,
+        literal(WorkflowStage.PROJECT_SETUP.value),
+        literal(WorkflowStatus.IN_PROGRESS.value),
+        literal(now),
+    )
+    document_defaults = select(
+        Document.id,
+        Document.project_id,
+        literal(DocumentClassification.UNCLASSIFIED.value),
+        literal(now),
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            sqlite_insert(ProjectWorkflow)
+            .prefix_with("OR IGNORE")
+            .from_select(
+                ["project_id", "stage", "status", "updated_at"],
+                workflow_defaults,
+            )
+        )
+        connection.execute(
+            sqlite_insert(DocumentProfile)
+            .prefix_with("OR IGNORE")
+            .from_select(
+                ["document_id", "project_id", "classification", "updated_at"],
+                document_defaults,
+            )
+        )
 
 
 def get_session(request: Request) -> Iterator[Session]:

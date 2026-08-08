@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from 'react'
 import type { UploadState } from '../types'
 
 interface DocumentUploadProps {
@@ -78,14 +78,25 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
               : 'Keep base RFPs, amendments, attachments, and exhibits together.'}
           </p>
         </div>
-        <button className="button button--secondary" type="button" onClick={() => inputRef.current?.click()}>
+        <label
+          className="button button--secondary"
+          htmlFor="document-upload-input"
+          role="button"
+          tabIndex={0}
+          aria-controls="document-upload-input"
+          onKeyDown={(event: KeyboardEvent<HTMLLabelElement>) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            inputRef.current?.click()
+          }}
+        >
           Choose documents
-        </button>
+        </label>
         <input
+          id="document-upload-input"
           ref={inputRef}
-          className="visually-hidden"
           type="file"
-          aria-label="Choose documents"
+          hidden
           accept={acceptedExtensions.map((extension) => `.${extension}`).join(',')}
           multiple
           onChange={choose}

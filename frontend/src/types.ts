@@ -21,6 +21,43 @@ export interface ProjectCreate {
   sensitivity: Sensitivity
 }
 
+export interface ProjectUpdate {
+  name?: string
+  solicitation_number?: string | null
+  agency?: string | null
+  due_at?: string | null
+  due_timezone?: string | null
+}
+
+export type WorkflowStage =
+  | 'PROJECT_SETUP'
+  | 'SOLICITATION_FILES'
+  | 'VERIFY_PACKAGE'
+  | 'REQUIREMENTS'
+  | 'PROPOSAL_RESPONSE'
+  | 'CROSSWALK'
+  | 'REPORTS'
+
+export type WorkflowStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'BLOCKED' | 'COMPLETE'
+
+export interface ProjectWorkflow {
+  project_id: string
+  stage: WorkflowStage
+  status: WorkflowStatus
+  blocker_summary?: string | null
+  updated_at: string
+}
+
+export type DocumentClassification =
+  | 'UNCLASSIFIED'
+  | 'BASE_SOLICITATION'
+  | 'AMENDMENT'
+  | 'ATTACHMENT'
+  | 'CDRL'
+  | 'Q_AND_A'
+  | 'REFERENCE'
+  | 'PROPOSAL_VOLUME'
+
 export interface ProjectDocument {
   id: string
   name: string
@@ -34,6 +71,25 @@ export interface ProjectDocument {
   duplicate_of?: string | null
   error?: string | null
   created_at?: string | null
+  classification?: DocumentClassification | null
+  volume_name?: string | null
+  classification_notes?: string | null
+}
+
+export interface DocumentProfileUpdate {
+  classification: DocumentClassification
+  volume_name?: string | null
+  classification_notes?: string | null
+}
+
+export interface DocumentText {
+  document_id: string
+  name: string
+  total_characters: number
+  start: number
+  end: number
+  text: string
+  truncated: boolean
 }
 
 export type HealthState = 'checking' | 'online' | 'offline'
@@ -192,4 +248,209 @@ export interface CDRL {
   updated_at?: string | null
 }
 
-export type ProjectView = 'documents' | 'requirements' | 'section-l' | 'section-m' | 'cdrls'
+export type CDRLAdjudicationStatus = 'PENDING' | 'REVIEWED' | 'WAIVED'
+
+export interface CDRLAdjudication {
+  cdrl_id: string
+  project_id: string
+  status: CDRLAdjudicationStatus
+  reviewer?: string | null
+  waiver_reason?: string | null
+  reviewed_at?: string | null
+  updated_at?: string | null
+  source_fingerprint?: string | null
+  fresh: boolean
+  context_only: boolean
+  incomplete: boolean
+  missing_fields: string[]
+  effective_ready: boolean
+}
+
+export interface CDRLAdjudicationUpdate {
+  status: CDRLAdjudicationStatus
+  reviewer?: string | null
+  waiver_reason?: string | null
+  expected_updated_at?: string | null
+}
+
+export type IntakeVerificationStatus = 'PENDING' | 'VERIFIED' | 'ISSUE' | 'NOT_APPLICABLE'
+
+export interface IntakeVerification {
+  id: string
+  project_id: string
+  document_id?: string | null
+  check_key: string
+  label: string
+  status: IntakeVerificationStatus
+  reviewer?: string | null
+  note?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface IntakeVerificationCreate {
+  document_id?: string | null
+  check_key: string
+  label: string
+  status?: IntakeVerificationStatus
+  reviewer?: string | null
+  note?: string | null
+}
+
+export interface IntakeVerificationUpdate {
+  label?: string
+  status?: IntakeVerificationStatus
+  reviewer?: string | null
+  note?: string | null
+}
+
+export type ActionStatus = 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE'
+
+export interface ProjectAction {
+  id: string
+  project_id: string
+  title: string
+  description?: string | null
+  owner?: string | null
+  due_at?: string | null
+  status: ActionStatus
+  finding_id?: string | null
+  requirement_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectActionCreate {
+  title: string
+  description?: string | null
+  owner?: string | null
+  due_at?: string | null
+  status?: ActionStatus
+  finding_id?: string | null
+  requirement_id?: string | null
+}
+
+export interface ProjectActionUpdate {
+  title?: string
+  description?: string | null
+  owner?: string | null
+  due_at?: string | null
+  status?: ActionStatus
+}
+
+export type CrosswalkStatus = 'COVERED' | 'PARTIAL' | 'MISSING' | 'CONFLICT' | 'N_A'
+
+export interface CrosswalkEvidence {
+  id: string
+  finding_id: string
+  document_id: string
+  document_name?: string | null
+  source_locator: string
+  excerpt: string
+  source_start?: number | null
+  source_end?: number | null
+  score?: number | null
+  is_manual?: boolean
+  created_at?: string | null
+}
+
+export interface CrosswalkEvidenceCreate {
+  document_id: string
+  source_start: number
+  source_end: number
+}
+
+export interface CrosswalkFinding {
+  id: string
+  project_id: string
+  requirement_id: string
+  requirement_text: string
+  requirement_section: SolicitationSection
+  candidate_status: CrosswalkStatus
+  status: CrosswalkStatus
+  score: number
+  evidence: CrosswalkEvidence[]
+  human_verified: boolean
+  reviewer?: string | null
+  owner?: string | null
+  due_at?: string | null
+  notes?: string | null
+  stale: boolean
+  reviewed_at?: string | null
+  generated_at: string
+  updated_at: string
+}
+
+export interface CrosswalkUpdate {
+  status?: CrosswalkStatus
+  human_verified?: boolean
+  reviewer?: string | null
+  owner?: string | null
+  due_at?: string | null
+  notes?: string | null
+  expected_updated_at?: string
+}
+
+export interface CrosswalkGenerationSummary {
+  requirements_analyzed: number
+  proposal_documents_analyzed: number
+  findings_created: number
+  findings_updated: number
+  verified_findings_marked_stale: number
+}
+
+export interface ReadinessSummary {
+  project_id: string
+  ready: boolean
+  readiness_percent: number
+  workflow_stage: WorkflowStage
+  workflow_status: WorkflowStatus
+  documents_total: number
+  documents_classified: number
+  proposal_documents: number
+  intake_total: number
+  intake_verified: number
+  intake_issues: number
+  requirements_total: number
+  requirements_validated: number
+  requirements_pending: number
+  cdrls_total: number
+  cdrls_ready: number
+  cdrls_incomplete: number
+  cdrls_unreviewed: number
+  cdrls_waived: number
+  cdrls_stale: number
+  crosswalk_total: number
+  crosswalk_verified: number
+  covered: number
+  partial: number
+  missing: number
+  conflict: number
+  n_a: number
+  unverified: number
+  actions_open: number
+  actions_blocked: number
+  blocking_reasons: string[]
+  next_action?: string | null
+  stages: Array<{
+    stage: WorkflowStage
+    label: string
+    status: WorkflowStatus
+    completed_items: number
+    total_items: number
+    blocking_reasons: string[]
+    next_action?: string | null
+  }>
+}
+
+export type ProjectView =
+  | 'setup'
+  | 'documents'
+  | 'verify-package'
+  | 'requirements'
+  | 'section-l'
+  | 'section-m'
+  | 'cdrls'
+  | 'proposal-response'
+  | 'crosswalk'
+  | 'reports'

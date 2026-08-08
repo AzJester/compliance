@@ -1,10 +1,28 @@
 import type {
   CDRL,
+  CDRLAdjudication,
+  CDRLAdjudicationUpdate,
+  CrosswalkFinding,
+  CrosswalkEvidence,
+  CrosswalkEvidenceCreate,
+  CrosswalkGenerationSummary,
+  CrosswalkUpdate,
+  DocumentProfileUpdate,
+  DocumentText,
   ExtractionSummary,
   HealthResponse,
+  IntakeVerification,
+  IntakeVerificationCreate,
+  IntakeVerificationUpdate,
   Project,
+  ProjectAction,
+  ProjectActionCreate,
+  ProjectActionUpdate,
   ProjectCreate,
   ProjectDocument,
+  ProjectUpdate,
+  ProjectWorkflow,
+  ReadinessSummary,
   Requirement,
   RequirementUpdate,
   ReviewDecision,
@@ -106,6 +124,23 @@ export const api = {
       body: JSON.stringify(project),
     }),
 
+  updateProject: (projectId: string, update: ProjectUpdate) =>
+    request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    }),
+
+  getWorkflow: (projectId: string) =>
+    request<ProjectWorkflow>(`/api/projects/${encodeURIComponent(projectId)}/workflow`),
+
+  updateWorkflow: (projectId: string, update: Partial<ProjectWorkflow>) =>
+    request<ProjectWorkflow>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    }),
+
   async listDocuments(projectId: string): Promise<ProjectDocument[]> {
     const payload = await request<
       ProjectDocument[] | { documents: ProjectDocument[] }
@@ -113,9 +148,18 @@ export const api = {
     return unwrapList(payload, ['documents', 'items', 'results'])
   },
 
-  async uploadDocuments(projectId: string, files: File[]): Promise<ProjectDocument[]> {
+  async uploadDocuments(
+    projectId: string,
+    files: File[],
+    profile?: DocumentProfileUpdate,
+  ): Promise<ProjectDocument[]> {
     const body = new FormData()
     files.forEach((file) => body.append('files', file))
+    if (profile) {
+      body.append('classification', profile.classification)
+      if (profile.volume_name) body.append('volume_name', profile.volume_name)
+      if (profile.classification_notes) body.append('classification_notes', profile.classification_notes)
+    }
     const payload = await request<
       ProjectDocument[] | { documents: ProjectDocument[] }
     >(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
@@ -124,6 +168,24 @@ export const api = {
     })
     return unwrapList(payload, ['documents', 'items', 'results'])
   },
+
+  updateDocumentProfile: (
+    projectId: string,
+    documentId: string,
+    update: DocumentProfileUpdate,
+  ) => request<ProjectDocument>(
+    `/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/profile`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    },
+  ),
+
+  getDocumentText: (projectId: string, documentId: string, start = 0, limit = 20_000) =>
+    request<DocumentText>(
+      `/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/text?start=${start}&limit=${limit}`,
+    ),
 
   extractRequirements: (projectId: string) =>
     request<ExtractionSummary>(`/api/projects/${encodeURIComponent(projectId)}/requirements/extract`, {
@@ -160,4 +222,130 @@ export const api = {
     )
     return unwrapList(payload, ['cdrls', 'CDRLs', 'items', 'results'])
   },
+
+  async listCdrlAdjudications(projectId: string): Promise<CDRLAdjudication[]> {
+    const payload = await request<CDRLAdjudication[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/cdrl-adjudications`,
+    )
+    return unwrapList(payload, ['adjudications', 'items', 'results'])
+  },
+
+  updateCdrlAdjudication: (
+    projectId: string,
+    cdrlId: string,
+    update: CDRLAdjudicationUpdate,
+  ) => request<CDRLAdjudication>(
+    `/api/projects/${encodeURIComponent(projectId)}/cdrls/${encodeURIComponent(cdrlId)}/adjudication`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    },
+  ),
+
+  async listIntakeVerifications(projectId: string): Promise<IntakeVerification[]> {
+    const payload = await request<IntakeVerification[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/intake-verifications`,
+    )
+    return unwrapList(payload, ['verifications', 'items', 'results'])
+  },
+
+  createIntakeVerification: (projectId: string, verification: IntakeVerificationCreate) =>
+    request<IntakeVerification>(`/api/projects/${encodeURIComponent(projectId)}/intake-verifications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(verification),
+    }),
+
+  initializeIntakeVerifications: (projectId: string) =>
+    request<IntakeVerification[]>(`/api/projects/${encodeURIComponent(projectId)}/intake-verifications/initialize`, {
+      method: 'POST',
+    }),
+
+  updateIntakeVerification: (
+    projectId: string,
+    verificationId: string,
+    update: IntakeVerificationUpdate,
+  ) => request<IntakeVerification>(
+    `/api/projects/${encodeURIComponent(projectId)}/intake-verifications/${encodeURIComponent(verificationId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    },
+  ),
+
+  async listActions(projectId: string): Promise<ProjectAction[]> {
+    const payload = await request<ProjectAction[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/actions`,
+    )
+    return unwrapList(payload, ['actions', 'items', 'results'])
+  },
+
+  createAction: (projectId: string, action: ProjectActionCreate) =>
+    request<ProjectAction>(`/api/projects/${encodeURIComponent(projectId)}/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(action),
+    }),
+
+  updateAction: (projectId: string, actionId: string, update: ProjectActionUpdate) =>
+    request<ProjectAction>(
+      `/api/projects/${encodeURIComponent(projectId)}/actions/${encodeURIComponent(actionId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      },
+    ),
+
+  generateCrosswalk: (projectId: string) =>
+    request<CrosswalkGenerationSummary>(`/api/projects/${encodeURIComponent(projectId)}/crosswalk/generate`, {
+      method: 'POST',
+    }),
+
+  async listCrosswalk(projectId: string): Promise<CrosswalkFinding[]> {
+    const payload = await request<CrosswalkFinding[] | Record<string, unknown>>(
+      `/api/projects/${encodeURIComponent(projectId)}/crosswalk`,
+    )
+    return unwrapList(payload, ['findings', 'items', 'results'])
+  },
+
+  updateCrosswalkFinding: (projectId: string, findingId: string, update: CrosswalkUpdate) =>
+    request<CrosswalkFinding>(
+      `/api/projects/${encodeURIComponent(projectId)}/crosswalk/${encodeURIComponent(findingId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      },
+    ),
+
+  addCrosswalkEvidence: (
+    projectId: string,
+    findingId: string,
+    evidence: CrosswalkEvidenceCreate,
+  ) => request<CrosswalkEvidence>(
+    `/api/projects/${encodeURIComponent(projectId)}/crosswalk/${encodeURIComponent(findingId)}/evidence`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(evidence),
+    },
+  ),
+
+  deleteCrosswalkEvidence: (projectId: string, findingId: string, evidenceId: string) =>
+    request<void>(
+      `/api/projects/${encodeURIComponent(projectId)}/crosswalk/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
+      { method: 'DELETE' },
+    ),
+
+  getReadiness: (projectId: string) =>
+    request<ReadinessSummary>(`/api/projects/${encodeURIComponent(projectId)}/readiness`),
+
+  exportUrl: (projectId: string, register: string, format: 'json' | 'csv' | 'xlsx') =>
+    `/api/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(register)}?format=${format}`,
+
+  workbookUrl: (projectId: string) =>
+    `/api/projects/${encodeURIComponent(projectId)}/exports/workbook.xlsx`,
 }

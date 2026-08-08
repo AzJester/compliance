@@ -125,6 +125,73 @@ class ReviewAction(StrEnum):
     REOPENED = "REOPENED"
 
 
+class WorkflowStage(StrEnum):
+    PROJECT_SETUP = "PROJECT_SETUP"
+    SOLICITATION_FILES = "SOLICITATION_FILES"
+    VERIFY_PACKAGE = "VERIFY_PACKAGE"
+    REQUIREMENTS = "REQUIREMENTS"
+    PROPOSAL_RESPONSE = "PROPOSAL_RESPONSE"
+    CROSSWALK = "CROSSWALK"
+    REPORTS = "REPORTS"
+
+
+class WorkflowStatus(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    COMPLETE = "COMPLETE"
+
+
+class DocumentClassification(StrEnum):
+    UNCLASSIFIED = "UNCLASSIFIED"
+    BASE_SOLICITATION = "BASE_SOLICITATION"
+    AMENDMENT = "AMENDMENT"
+    ATTACHMENT = "ATTACHMENT"
+    CDRL = "CDRL"
+    Q_AND_A = "Q_AND_A"
+    REFERENCE = "REFERENCE"
+    PROPOSAL_VOLUME = "PROPOSAL_VOLUME"
+
+
+SOLICITATION_DOCUMENT_CLASSIFICATIONS = frozenset(
+    {
+        DocumentClassification.BASE_SOLICITATION,
+        DocumentClassification.AMENDMENT,
+        DocumentClassification.ATTACHMENT,
+        DocumentClassification.CDRL,
+        DocumentClassification.Q_AND_A,
+    }
+)
+
+
+class IntakeVerificationStatus(StrEnum):
+    PENDING = "PENDING"
+    VERIFIED = "VERIFIED"
+    ISSUE = "ISSUE"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class CrosswalkStatus(StrEnum):
+    COVERED = "COVERED"
+    PARTIAL = "PARTIAL"
+    MISSING = "MISSING"
+    CONFLICT = "CONFLICT"
+    N_A = "N_A"
+
+
+class ActionStatus(StrEnum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    DONE = "DONE"
+
+
+class CDRLAdjudicationStatus(StrEnum):
+    PENDING = "PENDING"
+    REVIEWED = "REVIEWED"
+    WAIVED = "WAIVED"
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -149,6 +216,9 @@ class Project(Base):
     cdrls: Mapped[list[CDRL]] = relationship(back_populates="project", cascade="all, delete-orphan")
     review_decisions: Mapped[list[ReviewDecision]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
+    )
+    workflow: Mapped[ProjectWorkflow | None] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
     )
 
 
@@ -188,6 +258,9 @@ class Document(Base):
     blob: Mapped[Blob] = relationship(back_populates="documents")
     requirements: Mapped[list[Requirement]] = relationship(back_populates="document")
     cdrls: Mapped[list[CDRL]] = relationship(back_populates="document")
+    workflow_profile: Mapped[DocumentProfile | None] = relationship(
+        back_populates="document", cascade="all, delete-orphan", uselist=False
+    )
 
     @property
     def sha256(self) -> str:
@@ -196,6 +269,20 @@ class Document(Base):
     @property
     def size_bytes(self) -> int:
         return self.blob.size_bytes
+
+    @property
+    def classification(self) -> DocumentClassification:
+        if self.workflow_profile is None:
+            return DocumentClassification.UNCLASSIFIED
+        return self.workflow_profile.classification
+
+    @property
+    def volume_name(self) -> str | None:
+        return self.workflow_profile.volume_name if self.workflow_profile is not None else None
+
+    @property
+    def classification_notes(self) -> str | None:
+        return self.workflow_profile.notes if self.workflow_profile is not None else None
 
 
 class Requirement(Base):
@@ -354,6 +441,9 @@ class CDRL(Base):
     project: Mapped[Project] = relationship(back_populates="cdrls")
     document: Mapped[Document] = relationship(back_populates="cdrls")
     requirement: Mapped[Requirement] = relationship(back_populates="cdrl")
+    adjudication: Mapped[CDRLAdjudication | None] = relationship(
+        back_populates="cdrl", cascade="all, delete-orphan", uselist=False
+    )
 
     __table_args__ = (
         UniqueConstraint("project_id", "fingerprint", name="uq_cdrl_project_fingerprint"),
@@ -361,3 +451,251 @@ class CDRL(Base):
         CheckConstraint("source_end > source_start", name="ck_cdrl_source_end"),
         Index("ix_cdrl_project_validation", "project_id", "validation_status"),
     )
+
+
+class CDRLAdjudication(Base):
+    __tablename__ = "cdrl_adjudications"
+
+    cdrl_id: Mapped[str] = mapped_column(
+        ForeignKey("cdrls.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[CDRLAdjudicationStatus] = mapped_column(
+        Enum(CDRLAdjudicationStatus, native_enum=False),
+        default=CDRLAdjudicationStatus.PENDING,
+        index=True,
+    )
+    reviewer: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    waiver_reason: Mapped[str | None] = mapped_column(String(2_000), nullable=True)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    cdrl: Mapped[CDRL] = relationship(back_populates="adjudication")
+
+    __table_args__ = (Index("ix_cdrl_adjudication_project_status", "project_id", "status"),)
+
+
+class ProjectWorkflow(Base):
+    __tablename__ = "project_workflows"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    stage: Mapped[WorkflowStage] = mapped_column(
+        Enum(WorkflowStage, native_enum=False), default=WorkflowStage.PROJECT_SETUP
+    )
+    status: Mapped[WorkflowStatus] = mapped_column(
+        Enum(WorkflowStatus, native_enum=False), default=WorkflowStatus.IN_PROGRESS
+    )
+    blocker_summary: Mapped[str | None] = mapped_column(String(2_000), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    project: Mapped[Project] = relationship(back_populates="workflow")
+
+
+class DocumentProfile(Base):
+    __tablename__ = "document_profiles"
+
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    classification: Mapped[DocumentClassification] = mapped_column(
+        Enum(DocumentClassification, native_enum=False),
+        default=DocumentClassification.UNCLASSIFIED,
+        index=True,
+    )
+    volume_name: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(2_000), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    document: Mapped[Document] = relationship(back_populates="workflow_profile")
+
+    __table_args__ = (Index("ix_document_profile_project_class", "project_id", "classification"),)
+
+
+class IntakeVerification(Base):
+    __tablename__ = "intake_verifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    scope: Mapped[str] = mapped_column(String(36))
+    check_key: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(250))
+    status: Mapped[IntakeVerificationStatus] = mapped_column(
+        Enum(IntakeVerificationStatus, native_enum=False),
+        default=IntakeVerificationStatus.PENDING,
+        index=True,
+    )
+    reviewer: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(2_000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    document: Mapped[Document | None] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "scope", "check_key", name="uq_intake_project_scope_key"),
+        Index("ix_intake_project_status", "project_id", "status"),
+    )
+
+
+class CrosswalkFinding(Base):
+    __tablename__ = "crosswalk_findings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    requirement_id: Mapped[str] = mapped_column(
+        ForeignKey("requirements.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    candidate_status: Mapped[CrosswalkStatus] = mapped_column(
+        Enum(CrosswalkStatus, native_enum=False), index=True
+    )
+    status: Mapped[CrosswalkStatus] = mapped_column(
+        Enum(CrosswalkStatus, native_enum=False), index=True
+    )
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    candidate_signature: Mapped[str] = mapped_column(String(64))
+    human_verified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reviewer: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(4_000), nullable=True)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    requirement: Mapped[Requirement] = relationship()
+    evidence: Mapped[list[ProposalEvidence]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
+
+    @property
+    def requirement_text(self) -> str:
+        return self.requirement.requirement_text
+
+    @property
+    def requirement_section(self) -> RequirementSection:
+        return self.requirement.section
+
+    __table_args__ = (
+        CheckConstraint("score >= 0.0 AND score <= 1.0", name="ck_crosswalk_score"),
+        Index(
+            "ix_crosswalk_project_status_verified",
+            "project_id",
+            "status",
+            "human_verified",
+        ),
+    )
+
+
+class ProposalEvidence(Base):
+    __tablename__ = "proposal_evidence"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    finding_id: Mapped[str] = mapped_column(
+        ForeignKey("crosswalk_findings.id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    source_start: Mapped[int] = mapped_column(Integer)
+    source_end: Mapped[int] = mapped_column(Integer)
+    source_locator: Mapped[str] = mapped_column(String(2_500))
+    excerpt: Mapped[str] = mapped_column(Text)
+    score: Mapped[float] = mapped_column(Float)
+    is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+    finding: Mapped[CrosswalkFinding] = relationship(back_populates="evidence")
+    document: Mapped[Document] = relationship()
+
+    @property
+    def document_name(self) -> str:
+        return self.document.name
+
+    __table_args__ = (
+        CheckConstraint("source_start >= 0", name="ck_evidence_source_start"),
+        CheckConstraint("source_end > source_start", name="ck_evidence_source_end"),
+        CheckConstraint("score >= 0.0 AND score <= 1.0", name="ck_evidence_score"),
+        Index("ix_evidence_finding_source", "finding_id", "source_start", "id"),
+    )
+
+
+class ProjectAction(Base):
+    __tablename__ = "project_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(250))
+    description: Mapped[str | None] = mapped_column(String(4_000), nullable=True)
+    status: Mapped[ActionStatus] = mapped_column(
+        Enum(ActionStatus, native_enum=False), default=ActionStatus.TODO, index=True
+    )
+    owner: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    requirement_id: Mapped[str | None] = mapped_column(
+        ForeignKey("requirements.id", ondelete="SET NULL"), nullable=True
+    )
+    finding_id: Mapped[str | None] = mapped_column(
+        ForeignKey("crosswalk_findings.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (Index("ix_action_project_status_due", "project_id", "status", "due_at"),)
+
+
+class RequirementExtractionState(Base):
+    """Records the exact document state covered by the latest requirements run."""
+
+    __tablename__ = "requirement_extraction_states"
+
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    blob_sha256: Mapped[str] = mapped_column(String(64))
+    text_sha256: Mapped[str] = mapped_column(String(64))
+    classification: Mapped[DocumentClassification] = mapped_column(
+        Enum(DocumentClassification, native_enum=False)
+    )
+    rule_version: Mapped[str] = mapped_column(String(50))
+    analyzed_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+    __table_args__ = (
+        Index("ix_requirement_extraction_state_project", "project_id", "document_id"),
+    )
+
+
+class CrosswalkRunState(Base):
+    """Pins a crosswalk run to its requirement and proposal input sets."""
+
+    __tablename__ = "crosswalk_run_states"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    requirement_signature: Mapped[str] = mapped_column(String(64))
+    proposal_signature: Mapped[str] = mapped_column(String(64))
+    generated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
