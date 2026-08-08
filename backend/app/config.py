@@ -59,6 +59,10 @@ class Settings:
     max_archive_uncompressed_bytes: int = 1024 * 1024 * 1024
     max_archive_depth: int = 5
     max_compression_ratio: int = 200
+    max_requirement_candidates_per_document: int = 5_000
+    max_cdrl_candidates_per_document: int = 500
+    max_requirement_candidates_per_run: int = 20_000
+    max_cdrl_candidates_per_run: int = 2_000
     allowed_origins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -78,6 +82,10 @@ class Settings:
             "max_archive_uncompressed_bytes",
             "max_archive_depth",
             "max_compression_ratio",
+            "max_requirement_candidates_per_document",
+            "max_cdrl_candidates_per_document",
+            "max_requirement_candidates_per_run",
+            "max_cdrl_candidates_per_run",
         ):
             if getattr(self, field_name) <= 0:
                 raise ValueError(f"{field_name} must be greater than zero")
@@ -110,5 +118,15 @@ class Settings:
             ),
             max_archive_depth=_env_int("COMPLIANCE_MAX_ARCHIVE_DEPTH", 5),
             max_compression_ratio=_env_int("COMPLIANCE_MAX_COMPRESSION_RATIO", 200),
+            max_requirement_candidates_per_document=_env_int(
+                "COMPLIANCE_MAX_REQUIREMENT_CANDIDATES_PER_DOCUMENT", 5_000
+            ),
+            max_cdrl_candidates_per_document=_env_int(
+                "COMPLIANCE_MAX_CDRL_CANDIDATES_PER_DOCUMENT", 500
+            ),
+            max_requirement_candidates_per_run=_env_int(
+                "COMPLIANCE_MAX_REQUIREMENT_CANDIDATES_PER_RUN", 20_000
+            ),
+            max_cdrl_candidates_per_run=_env_int("COMPLIANCE_MAX_CDRL_CANDIDATES_PER_RUN", 2_000),
             allowed_origins=allowed_origins,
         )

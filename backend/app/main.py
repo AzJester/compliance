@@ -14,6 +14,7 @@ from .config import Settings
 from .database import create_database, get_session, initialize_database
 from .ingestion import IngestionError, prepare_uploads, store_documents
 from .models import Document, Project
+from .requirements_api import router as requirements_router
 from .schemas import DocumentResponse, HealthResponse, ProjectCreate, ProjectResponse
 from .security import LocalRequestMiddleware
 
@@ -100,6 +101,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 .order_by(Document.created_at, Document.id)
             )
         )
+
+    application.include_router(requirements_router)
 
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():

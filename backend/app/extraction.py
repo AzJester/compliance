@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +30,12 @@ def _clean_text(parts: list[str]) -> str:
 
 def _extract_pdf(data: bytes) -> ExtractionResult:
     with fitz.open(stream=data, filetype="pdf") as document:
-        text = _clean_text([page.get_text("text") for page in document])
+        parts: list[str] = []
+        for index, page in enumerate(document, start=1):
+            page_text = page.get_text("text").strip()
+            if page_text:
+                parts.extend((f"[PDF Page {index}]", page_text))
+        text = _clean_text(parts)
     if not text:
         return ExtractionResult(text="", status=DocumentStatus.NEEDS_OCR)
     return ExtractionResult(text=text, status=DocumentStatus.EXTRACTED)
@@ -37,16 +43,30 @@ def _extract_pdf(data: bytes) -> ExtractionResult:
 
 def _extract_docx(data: bytes) -> ExtractionResult:
     document = WordDocument(io.BytesIO(data))
-    parts = [paragraph.text for paragraph in document.paragraphs]
-    for table in document.tables:
-        for row in table.rows:
-            parts.append("\t".join(cell.text for cell in row.cells))
+    parts: list[str] = []
+    for index, paragraph in enumerate(document.paragraphs, start=1):
+        if paragraph.text.strip():
+            parts.extend((f"[DOCX Paragraph {index}]", paragraph.text))
+    for table_index, table in enumerate(document.tables, start=1):
+        for row_index, row in enumerate(table.rows, start=1):
+            row_text = "\t".join(cell.text for cell in row.cells)
+            if row_text.strip():
+                parts.extend((f"[DOCX Table {table_index} Row {row_index}]", row_text))
     return ExtractionResult(text=_clean_text(parts), status=DocumentStatus.EXTRACTED)
 
 
-def _cell_text(value: object) -> str:
+def _cell_text(cell: object) -> str:
+    value = cell.value  # type: ignore[attr-defined]
     if value is None:
         return ""
+    number_format = str(getattr(cell, "number_format", ""))
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and float(value).is_integer()
+        and re.fullmatch(r"0+", number_format)
+    ):
+        return f"{int(value):0{len(number_format)}d}"
     return str(value)
 
 
@@ -57,11 +77,15 @@ def _extract_xlsx(data: bytes) -> ExtractionResult:
     parts: list[str] = []
     try:
         for worksheet in workbook.worksheets:
-            parts.append(f"[{worksheet.title}]")
-            for row in worksheet.iter_rows(values_only=True):
-                values = [_cell_text(value) for value in row]
+            for row_index, row in enumerate(worksheet.iter_rows(), start=1):
+                values = [_cell_text(cell) for cell in row]
                 if any(values):
-                    parts.append("\t".join(values))
+                    parts.extend(
+                        (
+                            f'[XLSX Sheet "{worksheet.title}" Row {row_index}]',
+                            "\t".join(values),
+                        )
+                    )
     finally:
         workbook.close()
     return ExtractionResult(text=_clean_text(parts), status=DocumentStatus.EXTRACTED)

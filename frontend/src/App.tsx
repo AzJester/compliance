@@ -293,6 +293,7 @@ export function App() {
         <main id="main-content" className="main-content">
           {activeProject ? (
             <ProjectOverview
+              key={activeProject.id}
               project={activeProject}
               documents={documents}
               isLoadingDocuments={isLoadingDocuments}

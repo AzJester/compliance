@@ -23,14 +23,14 @@ def test_project_crud(client: TestClient) -> None:
         "agency": "Missile Defense Agency",
         "due_at": "2026-11-10T14:00:00Z",
         "due_timezone": "America/Denver",
-        "sensitivity": "ITAR",
+        "sensitivity": "PUBLIC",
     }
 
     created_response = client.post("/api/projects", json=payload)
     assert created_response.status_code == 201
     created = created_response.json()
     assert created["name"] == "Missile Defense RFP"
-    assert created["sensitivity"] == "ITAR"
+    assert created["sensitivity"] == "PUBLIC"
     assert created["due_at"] == "2026-11-10T14:00:00Z"
     assert created["id"]
     assert created["created_at"]
@@ -47,6 +47,14 @@ def test_project_crud(client: TestClient) -> None:
 
 def test_project_validation_and_missing_project(client: TestClient) -> None:
     assert client.post("/api/projects", json={"name": ""}).status_code == 422
+
+    for sensitivity in ("CUI", "ITAR"):
+        unsupported = client.post(
+            "/api/projects", json={"name": "Example", "sensitivity": sensitivity}
+        )
+        assert unsupported.status_code == 422
+        assert "Only PUBLIC projects are supported" in unsupported.json()["detail"][0]["msg"]
+
     assert (
         client.post(
             "/api/projects", json={"name": "Example", "sensitivity": "CLASSIFIED"}
