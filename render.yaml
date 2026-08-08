@@ -9,7 +9,6 @@ services:
     autoDeployTrigger: checksPass
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
-    maxShutdownDelaySeconds: 120
     numInstances: 1
     domains:
       - compliance.insightfuldefense.com
