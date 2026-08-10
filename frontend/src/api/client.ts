@@ -100,6 +100,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+export interface DownloadedFile {
+  blob: Blob
+  filename: string
+}
+
+function downloadFilename(response: Response, fallback: string) {
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded)
+    } catch {
+      // Fall through to the plain filename or the safe client fallback.
+    }
+  }
+  return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? fallback
+}
+
+async function download(path: string, fallbackFilename: string): Promise<DownloadedFile> {
+  const response = await fetch(path, { headers: { Accept: '*/*' } })
+  if (!response.ok) {
+    let message = `Download failed (${response.status})`
+    try {
+      message = responseErrorMessage(await response.json(), message)
+    } catch {
+      // Preserve the HTTP status fallback when an error body is not JSON.
+    }
+    throw new ApiError(message, response.status)
+  }
+  return {
+    blob: await response.blob(),
+    filename: downloadFilename(response, fallbackFilename),
+  }
+}
+
 function unwrapList<T>(payload: T[] | Record<string, unknown>, keys: string[]): T[] {
   if (Array.isArray(payload)) return payload
   for (const key of keys) {
@@ -372,4 +407,20 @@ export const api = {
 
   workbookUrl: (projectId: string) =>
     `/api/projects/${encodeURIComponent(projectId)}/exports/workbook.xlsx`,
+
+  complianceReportUrl: (projectId: string) =>
+    `/api/projects/${encodeURIComponent(projectId)}/exports/compliance-report.docx`,
+
+  gapReportUrl: (projectId: string) =>
+    `/api/projects/${encodeURIComponent(projectId)}/exports/gaps.csv`,
+
+  downloadComplianceReport: (projectId: string) => download(
+    `/api/projects/${encodeURIComponent(projectId)}/exports/compliance-report.docx`,
+    'compliance-assessment.docx',
+  ),
+
+  downloadGapReport: (projectId: string) => download(
+    `/api/projects/${encodeURIComponent(projectId)}/exports/gaps.csv`,
+    'requirements-gaps.csv',
+  ),
 }

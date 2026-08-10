@@ -464,7 +464,11 @@ export function ProjectOverview({
               onAnalysisBusyChange={setIsAnalysisBusy}
               onContinue={analysisComplete}
             />
-            <ReportsWorkspace key={`reports:${project.id}:${analysisRevision}`} projectId={project.id} />
+            <ReportsWorkspace
+              key={`reports:${project.id}:${analysisRevision}`}
+              projectId={project.id}
+              isAnonymous={isAnonymous}
+            />
           </section>
         )}
       </div>
