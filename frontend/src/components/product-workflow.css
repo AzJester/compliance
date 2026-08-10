@@ -79,6 +79,9 @@
 .product-empty strong { color: var(--slate-900); font-size: 15px; }
 .product-empty p { margin: 7px auto 0; max-width: 420px; font-size: 13px; line-height: 1.5; }
 .document-state { padding: 4px 7px; color: #175c42 !important; background: #d9f2e6; border-radius: 4px; font-size: 11px !important; font-weight: 800; text-transform: capitalize; }
+.document-state--error,
+.document-state--failed,
+.document-state--needs_ocr { color: #7a271a !important; background: #fee4e2; }
 .proposal-compliance-stage { display: grid; gap: 18px; }
 
 .crosswalk-header .button { min-height: 44px; font-size: 14px; white-space: nowrap; }

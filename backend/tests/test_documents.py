@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
+from pptx import Presentation
 
 from backend.app.extraction import extract_document
 
@@ -102,6 +103,47 @@ def test_blank_pdf_needs_ocr_and_parser_error_is_safe(
     assert by_name["broken.docx"]["error"] == (
         "The document was preserved, but its text could not be extracted."
     )
+
+
+def test_blank_office_documents_are_preserved_as_searchable_text_errors(
+    client: TestClient, project: dict[str, object]
+) -> None:
+    workbook = Workbook()
+    workbook_stream = io.BytesIO()
+    workbook.save(workbook_stream)
+    workbook.close()
+
+    presentation = Presentation()
+    presentation_stream = io.BytesIO()
+    presentation.save(presentation_stream)
+
+    content = {
+        "blank.docx": docx_bytes(""),
+        "blank.xlsx": workbook_stream.getvalue(),
+        "blank.pptx": presentation_stream.getvalue(),
+    }
+    response = _upload(
+        client,
+        str(project["id"]),
+        [(name, data, "application/octet-stream") for name, data in content.items()],
+    )
+
+    assert response.status_code == 201, response.text
+    documents = response.json()
+    assert {document["name"] for document in documents} == set(content)
+    assert all(document["status"] == "ERROR" for document in documents)
+    assert all(document["extraction_count"] == 0 for document in documents)
+    assert all(
+        "no searchable text could be extracted" in document["error"] for document in documents
+    )
+    assert all(
+        "searchable PDF or text-based Office document" in document["error"]
+        for document in documents
+    )
+
+    listing = client.get(f"/api/projects/{project['id']}/documents")
+    assert listing.status_code == 200
+    assert {item["id"] for item in listing.json()} == {item["id"] for item in documents}
 
 
 def test_recursive_zip_expansion(client: TestClient, project: dict[str, object]) -> None:

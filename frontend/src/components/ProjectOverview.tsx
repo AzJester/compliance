@@ -126,6 +126,7 @@ export function ProjectOverview({
   const [pipelineError, setPipelineError] = useState<string | null>(null)
   const [pipelinePhase, setPipelinePhase] = useState<'idle' | 'uploading' | 'extracting'>('idle')
   const [analysisRevision, setAnalysisRevision] = useState(0)
+  const [isAnalysisBusy, setIsAnalysisBusy] = useState(false)
   const failures = documents.filter((document) => (
     document.error || attentionStatuses.has(document.status.toLowerCase())
   )).length
@@ -450,13 +451,17 @@ export function ProjectOverview({
               projectId={project.id}
               documents={documents}
               isAnonymous={isAnonymous}
+              isAnalysisBusy={isAnalysisBusy}
               onDocumentsChanged={onRefresh}
+              onAnalysisBusyChange={setIsAnalysisBusy}
               onAnalysisComplete={analysisComplete}
             />
             <CrosswalkWorkspace
               key={`crosswalk:${project.id}:${analysisRevision}`}
               projectId={project.id}
               proposalDocuments={proposalDocuments}
+              isAnalysisBusy={isAnalysisBusy}
+              onAnalysisBusyChange={setIsAnalysisBusy}
               onContinue={analysisComplete}
             />
             <ReportsWorkspace key={`reports:${project.id}:${analysisRevision}`} projectId={project.id} />

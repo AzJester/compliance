@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -24,6 +24,12 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
 }
 
 const project: Project = {
@@ -336,6 +342,7 @@ describe('product workflow components', () => {
 
   it('uploads an anonymous proposal volume with atomic classification metadata', async () => {
     const onDocumentsChanged = vi.fn()
+    const onAnalysisBusyChange = vi.fn()
     const onAnalysisComplete = vi.fn()
     const proposalDocument: ProjectDocument = {
       ...documentRecord,
@@ -370,7 +377,9 @@ describe('product workflow components', () => {
         projectId={project.id}
         documents={[]}
         isAnonymous
+        isAnalysisBusy={false}
         onDocumentsChanged={onDocumentsChanged}
+        onAnalysisBusyChange={onAnalysisBusyChange}
         onAnalysisComplete={onAnalysisComplete}
       />,
     )
@@ -389,6 +398,409 @@ describe('product workflow components', () => {
     expect(onAnalysisComplete).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('status')).toHaveTextContent(/1,250 requirements were analyzed/i)
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(onAnalysisBusyChange.mock.calls.map(([isBusy]) => isBusy)).toEqual([true, false])
+  })
+
+  it('refreshes proposal results after upload-triggered analysis fails', async () => {
+    const onAnalysisBusyChange = vi.fn()
+    const onAnalysisComplete = vi.fn()
+    const proposalDocument: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-1',
+      name: 'synthetic-technical.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Technical Volume',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/crosswalk/generate')) {
+        return new Response('', { status: 500 })
+      }
+      return jsonResponse([proposalDocument], 201)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(
+      <ProposalWorkspace
+        projectId={project.id}
+        documents={[]}
+        isAnonymous
+        isAnalysisBusy={false}
+        onDocumentsChanged={vi.fn()}
+        onAnalysisBusyChange={onAnalysisBusyChange}
+        onAnalysisComplete={onAnalysisComplete}
+      />,
+    )
+
+    await user.upload(
+      screen.getByLabelText(/choose proposal documents/i),
+      new File(['synthetic proposal'], 'synthetic-technical.pdf', { type: 'application/pdf' }),
+    )
+    await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC material/i }))
+    await user.click(screen.getByRole('button', { name: /upload and analyze proposal/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /automated assessment request failed: Request failed \(500\).*Existing results were refreshed below/i,
+    )
+    expect(onAnalysisComplete).toHaveBeenCalledTimes(1)
+    expect(onAnalysisBusyChange.mock.calls.map(([isBusy]) => isBusy)).toEqual([true, false])
+  })
+
+  it('skips automatic analysis when an uploaded proposal has no searchable text', async () => {
+    const zeroTextProposal: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-empty',
+      name: 'scanned-proposal.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Scanned Proposal',
+      extraction_count: 0,
+    }
+    const onDocumentsChanged = vi.fn()
+    const onAnalysisComplete = vi.fn()
+    const onAnalysisBusyChange = vi.fn()
+    let generationPosts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/crosswalk/generate') && init?.method === 'POST') {
+        generationPosts += 1
+      }
+      return jsonResponse([zeroTextProposal], 201)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(
+      <ProposalWorkspace
+        projectId={project.id}
+        documents={[]}
+        isAnonymous
+        isAnalysisBusy={false}
+        onDocumentsChanged={onDocumentsChanged}
+        onAnalysisBusyChange={onAnalysisBusyChange}
+        onAnalysisComplete={onAnalysisComplete}
+      />,
+    )
+
+    await user.upload(
+      screen.getByLabelText(/choose proposal documents/i),
+      new File(['scanned image'], 'scanned-proposal.pdf', { type: 'application/pdf' }),
+    )
+    await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC material/i }))
+    await user.click(screen.getByRole('button', { name: /upload and analyze proposal/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /No searchable text was extracted.*searchable PDF or DOCX.*run OCR/i,
+    )
+    expect(generationPosts).toBe(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onDocumentsChanged).toHaveBeenCalledTimes(1)
+    expect(onAnalysisComplete).toHaveBeenCalledTimes(1)
+    expect(onAnalysisBusyChange.mock.calls.map(([isBusy]) => isBusy)).toEqual([true, false])
+  })
+
+  it('reanalyzes an existing searchable proposal when a new upload has no text', async () => {
+    const validProposal: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-valid',
+      name: 'searchable-proposal.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Searchable Proposal',
+    }
+    const zeroTextProposal: ProjectDocument = {
+      ...validProposal,
+      id: 'proposal-empty',
+      name: 'scanned-proposal.pdf',
+      volume_name: 'Scanned Proposal',
+      extraction_count: 0,
+    }
+    let generationPosts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/crosswalk/generate') && init?.method === 'POST') {
+        generationPosts += 1
+        return jsonResponse({
+          requirements_analyzed: 1250,
+          proposal_documents_analyzed: 1,
+          findings_created: 0,
+          findings_updated: 1250,
+          verified_findings_marked_stale: 0,
+        })
+      }
+      return jsonResponse([zeroTextProposal], 201)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(
+      <ProposalWorkspace
+        projectId={project.id}
+        documents={[validProposal]}
+        isAnonymous
+        isAnalysisBusy={false}
+        onDocumentsChanged={vi.fn()}
+        onAnalysisBusyChange={vi.fn()}
+        onAnalysisComplete={vi.fn()}
+      />,
+    )
+
+    await user.upload(
+      screen.getByLabelText(/choose proposal documents/i),
+      new File(['scanned image'], 'scanned-proposal.pdf', { type: 'application/pdf' }),
+    )
+    await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC material/i }))
+    await user.click(screen.getByRole('button', { name: /upload and analyze proposal/i }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/1,250 requirements were analyzed/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /1 uploaded file contained no searchable text and was excluded from analysis.*run OCR/i,
+    )
+    expect(generationPosts).toBe(1)
+  })
+
+  it('requires searchable proposal text but still allows mixed usable volumes', async () => {
+    const validProposal: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-valid',
+      name: 'searchable-proposal.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Searchable Proposal',
+    }
+    const zeroTextProposal: ProjectDocument = {
+      ...validProposal,
+      id: 'proposal-empty',
+      name: 'scanned-proposal.pdf',
+      volume_name: 'Scanned Proposal',
+      extraction_count: 0,
+    }
+    const failedProposal: ProjectDocument = {
+      ...zeroTextProposal,
+      id: 'proposal-failed',
+      name: 'protected-proposal.pdf',
+      volume_name: 'Protected Proposal',
+      status: 'FAILED',
+      error: 'The PDF is password protected.',
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse([])))
+
+    const { rerender } = render(
+      <>
+        <ProposalWorkspace
+          projectId={project.id}
+          documents={[validProposal, zeroTextProposal, failedProposal]}
+          isAnonymous
+          isAnalysisBusy={false}
+          onDocumentsChanged={vi.fn()}
+          onAnalysisBusyChange={vi.fn()}
+        />
+        <CrosswalkWorkspace
+          projectId={project.id}
+          proposalDocuments={[validProposal, zeroTextProposal, failedProposal]}
+          isAnalysisBusy={false}
+          onAnalysisBusyChange={vi.fn()}
+        />
+      </>,
+    )
+
+    expect(await screen.findByText(/No searchable text was extracted\. Upload a searchable document or run OCR/i)).toBeInTheDocument()
+    expect(screen.getByText(/The PDF is password protected/i)).toBeInTheDocument()
+    expect(screen.getByText(/^NO SEARCHABLE TEXT$/i)).toHaveClass('document-state--error')
+    expect(screen.getByText(/^ERROR$/i)).toHaveClass('document-state--error')
+    expect(screen.getByRole('button', { name: /^analyze proposal$/i })).toBeEnabled()
+
+    rerender(
+      <CrosswalkWorkspace
+        projectId={project.id}
+        proposalDocuments={[zeroTextProposal]}
+        isAnalysisBusy={false}
+        onAnalysisBusyChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /^analyze proposal$/i })).toBeDisabled()
+    expect(screen.getByText(/No uploaded proposal contains searchable text.*run OCR/i)).toBeInTheDocument()
+  })
+
+  it('blocks both proposal generation controls while shared analysis is busy', async () => {
+    const proposalDocument: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-1',
+      name: 'synthetic-technical.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Technical Volume',
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse([])))
+    const user = userEvent.setup()
+
+    render(
+      <>
+        <ProposalWorkspace
+          projectId={project.id}
+          documents={[proposalDocument]}
+          isAnonymous
+          isAnalysisBusy
+          onDocumentsChanged={vi.fn()}
+          onAnalysisBusyChange={vi.fn()}
+        />
+        <CrosswalkWorkspace
+          projectId={project.id}
+          proposalDocuments={[proposalDocument]}
+          isAnalysisBusy
+          onAnalysisBusyChange={vi.fn()}
+        />
+      </>,
+    )
+
+    await user.upload(
+      screen.getByLabelText(/choose proposal documents/i),
+      new File(['next proposal'], 'next-technical.pdf', { type: 'application/pdf' }),
+    )
+    await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC material/i }))
+
+    expect(screen.getByRole('button', { name: /proposal analysis in progress/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /analyzing proposal/i })).toBeDisabled()
+  })
+
+  it('blocks manual analysis throughout proposal upload and automatic generation', async () => {
+    const proposalDocument: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-1',
+      name: 'synthetic-technical.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Technical Volume',
+    }
+    const uploadedDocument: ProjectDocument = {
+      ...proposalDocument,
+      id: 'proposal-2',
+      name: 'synthetic-management.pdf',
+      volume_name: 'Management Volume',
+    }
+    const uploadRequest = deferred<Response>()
+    const generationRequest = deferred<Response>()
+    let generationPosts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/documents') && init?.method === 'POST') return uploadRequest.promise
+      if (url.endsWith('/crosswalk/generate') && init?.method === 'POST') {
+        generationPosts += 1
+        return generationRequest.promise
+      }
+      if (url.endsWith('/readiness')) return jsonResponse(readinessWith())
+      if (url.endsWith('/workflow')) return jsonResponse(workflow)
+      if (url.endsWith('/crosswalk') || url.endsWith('/requirements') || url.endsWith('/actions')) {
+        return jsonResponse([])
+      }
+      return jsonResponse({ detail: 'Not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    window.history.replaceState(null, '', '/?stage=proposal-compliance')
+    const user = userEvent.setup()
+
+    render(
+      <ProjectOverview
+        project={project}
+        documents={[proposalDocument]}
+        isLoadingDocuments={false}
+        documentError={null}
+        uploadState="idle"
+        uploadMessage={null}
+        isAnonymous
+        onUpload={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    )
+
+    await user.upload(
+      screen.getByLabelText(/choose proposal documents/i),
+      new File(['management proposal'], 'synthetic-management.pdf', { type: 'application/pdf' }),
+    )
+    await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC material/i }))
+    await user.click(screen.getByRole('button', { name: /upload and analyze proposal/i }))
+
+    const analyzeDuringUpload = await screen.findByRole('button', { name: /^analyzing proposal/i })
+    expect(analyzeDuringUpload).toBeDisabled()
+    await user.click(analyzeDuringUpload)
+    expect(generationPosts).toBe(0)
+
+    await act(async () => {
+      uploadRequest.resolve(jsonResponse([uploadedDocument], 201))
+    })
+    await waitFor(() => expect(generationPosts).toBe(1))
+
+    const analyzeDuringGeneration = screen.getByRole('button', { name: /^analyzing proposal/i })
+    expect(analyzeDuringGeneration).toBeDisabled()
+    await user.click(analyzeDuringGeneration)
+    expect(generationPosts).toBe(1)
+
+    await act(async () => {
+      generationRequest.resolve(jsonResponse({
+        requirements_analyzed: 1250,
+        proposal_documents_analyzed: 2,
+        findings_created: 1250,
+        findings_updated: 0,
+        verified_findings_marked_stale: 0,
+      }))
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^analyze proposal$/i })).toBeEnabled())
+    expect(generationPosts).toBe(1)
+  })
+
+  it('reloads findings and preserves the failure detail when manual analysis fails', async () => {
+    const proposalDocument: ProjectDocument = {
+      ...documentRecord,
+      id: 'proposal-1',
+      name: 'synthetic-technical.pdf',
+      classification: 'PROPOSAL_VOLUME',
+      volume_name: 'Technical Volume',
+    }
+    const recoveredFinding: CrosswalkFinding = {
+      id: 'finding-1',
+      project_id: project.id,
+      requirement_id: 'requirement-1',
+      requirement_text: 'The offeror shall provide a transition plan.',
+      requirement_section: 'L',
+      candidate_status: 'PARTIAL',
+      status: 'PARTIAL',
+      score: 0.51,
+      evidence: [],
+      human_verified: false,
+      stale: false,
+      generated_at: '2026-08-10T19:03:16Z',
+      updated_at: '2026-08-10T19:04:55Z',
+    }
+    const onAnalysisBusyChange = vi.fn()
+    let crosswalkLoads = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/crosswalk/generate') && init?.method === 'POST') {
+        return new Response('', { status: 500 })
+      }
+      if (url.endsWith('/crosswalk')) {
+        crosswalkLoads += 1
+        return jsonResponse(crosswalkLoads === 1 ? [] : [recoveredFinding])
+      }
+      return jsonResponse({ detail: 'Not found' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(
+      <CrosswalkWorkspace
+        projectId={project.id}
+        proposalDocuments={[proposalDocument]}
+        isAnalysisBusy={false}
+        onAnalysisBusyChange={onAnalysisBusyChange}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: /^analyze proposal$/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /proposal assessment request failed: Request failed \(500\).*Existing results were refreshed/i,
+    )
+    expect(screen.getAllByText(recoveredFinding.requirement_text).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /reanalyze proposal/i })).toBeEnabled()
+    expect(crosswalkLoads).toBe(2)
+    expect(onAnalysisBusyChange.mock.calls.map(([isBusy]) => isBusy)).toEqual([true, false])
   })
 
   it('records persisted package verification with a reviewer label', async () => {
@@ -467,7 +879,14 @@ describe('product workflow components', () => {
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
 
-    render(<CrosswalkWorkspace projectId={project.id} proposalDocuments={[proposalDocument]} />)
+    render(
+      <CrosswalkWorkspace
+        projectId={project.id}
+        proposalDocuments={[proposalDocument]}
+        isAnalysisBusy={false}
+        onAnalysisBusyChange={vi.fn()}
+      />,
+    )
     expect((await screen.findAllByText(finding.requirement_text)).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: new RegExp(finding.requirement_text, 'i') }))
     await user.click(screen.getByRole('button', { name: /add source passage/i }))
