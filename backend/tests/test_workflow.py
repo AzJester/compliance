@@ -694,9 +694,7 @@ def test_dismiss_and_reopen_preserve_audit_and_refresh_the_active_crosswalk(
     )
     assert reopened.status_code == 200, reopened.text
     before_regeneration = client.get(f"/api/projects/{project_id}/readiness").json()
-    assert any(
-        "stale crosswalk" in reason for reason in before_regeneration["blocking_reasons"]
-    )
+    assert any("stale crosswalk" in reason for reason in before_regeneration["blocking_reasons"])
 
     assert client.post(f"/api/projects/{project_id}/crosswalk/generate").status_code == 200
     refreshed = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]

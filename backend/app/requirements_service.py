@@ -335,9 +335,9 @@ def apply_requirement_patch(
         action = ReviewAction.UPDATED
 
     current = _state(requirement)
-    active_state_changed = (
-        previous["validation_status"] == ValidationStatus.DISMISSED.value
-    ) != (current["validation_status"] == ValidationStatus.DISMISSED.value)
+    active_state_changed = (previous["validation_status"] == ValidationStatus.DISMISSED.value) != (
+        current["validation_status"] == ValidationStatus.DISMISSED.value
+    )
     crosswalk_input_changed = active_state_changed or any(
         previous[field] != current[field] for field in _CROSSWALK_RELEVANT_FIELDS
     )

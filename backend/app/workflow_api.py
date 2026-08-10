@@ -1408,16 +1408,10 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
         and finding.id not in unreviewed_override_finding_ids
     ]
     status_counts = {
-        crosswalk_status: sum(
-            finding.status == crosswalk_status for finding in effective_findings
-        )
+        crosswalk_status: sum(finding.status == crosswalk_status for finding in effective_findings)
         for crosswalk_status in CrosswalkStatus
     }
-    verified_findings = [
-        finding
-        for finding in effective_findings
-        if finding.human_verified
-    ]
+    verified_findings = [finding for finding in effective_findings if finding.human_verified]
     compliant_findings = sum(
         finding.status in {CrosswalkStatus.COVERED, CrosswalkStatus.N_A}
         for finding in effective_findings
