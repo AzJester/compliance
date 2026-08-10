@@ -15,13 +15,13 @@ interface ProjectDashboardProps {
 const attentionStatuses = new Set(['failed', 'error', 'needs_ocr'])
 
 const dashboardActionByStage: Record<WorkflowStage, { label: string; stage: WorkflowStageId }> = {
-  PROJECT_SETUP: { label: 'Review project setup', stage: 'setup' },
-  SOLICITATION_FILES: { label: 'Review solicitation files', stage: 'solicitation-files' },
-  VERIFY_PACKAGE: { label: 'Verify package', stage: 'verify-package' },
+  PROJECT_SETUP: { label: 'Review solicitation', stage: 'solicitation-files' },
+  SOLICITATION_FILES: { label: 'Review solicitation', stage: 'solicitation-files' },
+  VERIFY_PACKAGE: { label: 'Review solicitation', stage: 'solicitation-files' },
   REQUIREMENTS: { label: 'Open requirements', stage: 'requirements' },
-  PROPOSAL_RESPONSE: { label: 'Review proposal response', stage: 'proposal-response' },
-  CROSSWALK: { label: 'Review crosswalk', stage: 'crosswalk' },
-  REPORTS: { label: 'Review readiness', stage: 'reports' },
+  PROPOSAL_RESPONSE: { label: 'Assess proposal coverage', stage: 'proposal-compliance' },
+  CROSSWALK: { label: 'Review coverage', stage: 'proposal-compliance' },
+  REPORTS: { label: 'Review coverage', stage: 'proposal-compliance' },
 }
 
 function formatDate(value?: string | null, timeZone?: string | null) {
@@ -65,6 +65,7 @@ export function ProjectDashboard({
   const completedStages = readiness
     ? readiness.stages.filter((stage) => stage.status === 'COMPLETE').length
     : 0
+  const stageTotal = readiness?.stages.length ?? 3
   const blockedStage = readiness?.stages.find((stage) => stage.blocking_reasons.length > 0)
   const nextAction = blockedStage
     ? {
@@ -74,10 +75,10 @@ export function ProjectDashboard({
       }
     : readiness
       ? {
-          title: readiness.ready ? 'Review final readiness' : 'Continue the workflow',
-          detail: readiness.next_action ?? 'Review the current compliance status and remaining work.',
-          label: 'Review readiness',
-          stage: 'reports' as const,
+          title: readiness.ready ? 'Review proposal coverage' : 'Continue the analysis',
+          detail: readiness.next_action ?? 'Review the current proposal coverage and remaining gaps.',
+          label: 'Review coverage',
+          stage: 'proposal-compliance' as const,
         }
       : documents.length === 0
     ? {
@@ -93,19 +94,12 @@ export function ProjectDashboard({
           label: 'Review document issues',
           stage: 'solicitation-files' as const,
         }
-      : !packageVerified
-        ? {
-            title: 'Verify that the package is complete',
-            detail: 'Confirm amendments, versions, and the PUBLIC-data boundary.',
-            label: 'Verify package',
-            stage: 'verify-package' as const,
-          }
-        : {
-            title: 'Review extracted requirements',
-            detail: 'Extract candidates and verify each one against its source.',
-            label: 'Open requirements',
-            stage: 'requirements' as const,
-          }
+      : {
+          title: 'View extracted requirements',
+          detail: 'Use the full extracted inventory immediately; correct or exclude only exceptions.',
+          label: 'Open requirements',
+          stage: 'requirements' as const,
+        }
 
   const saveProject = async () => {
     if (!name.trim()) {
@@ -142,12 +136,12 @@ export function ProjectDashboard({
         <div>
           <div className="section-kicker">Project dashboard</div>
           <h2 id="dashboard-title">Continue where you left off</h2>
-          <p>Move through the guided workflow and resolve blockers before reporting readiness.</p>
+          <p>Upload the solicitation, inspect the extracted requirements, and assess proposal coverage.</p>
         </div>
-        <div className="dashboard-progress" aria-label={`${completedStages} of 7 workflow stages complete`}>
-          <strong>{completedStages}<span>/7</span></strong>
-          <small>stages complete</small>
-          <progress max="7" value={completedStages}>{completedStages} of 7</progress>
+        <div className="dashboard-progress" aria-label={`${completedStages} of ${stageTotal} analysis steps complete`}>
+          <strong>{completedStages}<span>/{stageTotal}</span></strong>
+          <small>steps complete</small>
+          <progress max={stageTotal} value={completedStages}>{completedStages} of {stageTotal}</progress>
         </div>
       </div>
 
@@ -181,8 +175,8 @@ export function ProjectDashboard({
                 : 'Solicitation files not added'}
             </li>
             <li className={packageVerified ? 'is-complete' : failures > 0 ? 'has-attention' : ''}>
-              <span aria-hidden="true">{packageVerified ? '✓' : failures > 0 ? '!' : '3'}</span>
-              {packageVerified ? 'Package verification recorded' : failures > 0 ? 'Document issues need review' : 'Package verification pending'}
+              <span aria-hidden="true">{packageVerified ? '✓' : failures > 0 ? '!' : '·'}</span>
+              {packageVerified ? 'Optional package check recorded' : failures > 0 ? 'Document issues need review' : 'Optional package check not recorded'}
             </li>
           </ul>
         </section>

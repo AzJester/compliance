@@ -34,9 +34,9 @@ export function enumLabel(value: string) {
 }
 
 export function statusLabel(status: ValidationStatus | string) {
-  if (status === 'VALIDATED') return 'Verified'
-  if (status === 'DISMISSED') return 'Not a requirement'
-  if (status === 'PENDING') return 'Pending review'
+  if (status === 'VALIDATED') return 'Reviewer confirmed'
+  if (status === 'DISMISSED') return 'Excluded'
+  if (status === 'PENDING') return 'As extracted'
   return enumLabel(status)
 }
 
@@ -211,11 +211,11 @@ export function RequirementEditor({
     <aside className="requirement-editor" role="dialog" aria-labelledby="requirement-editor-title" aria-modal="true">
       <div className="requirement-editor__heading">
         <div>
-          <div className="section-kicker">Human review</div>
-          <h3 id="requirement-editor-title">Review requirement</h3>
-          {position && total && <p className="review-position">Requirement {position} of {total} in this queue</p>}
+          <div className="section-kicker">Optional correction</div>
+          <h3 id="requirement-editor-title">Correct or exclude requirement</h3>
+          {position && total && <p className="review-position">Requirement {position} of {total} in this inventory</p>}
         </div>
-        <button ref={closeButtonRef} className="icon-button" type="button" aria-label="Close requirement review" onClick={onClose}>×</button>
+        <button ref={closeButtonRef} className="icon-button" type="button" aria-label="Close requirement details" onClick={onClose}>×</button>
       </div>
 
       <div className="review-navigation" aria-label="Requirement navigation">
@@ -303,7 +303,7 @@ export function RequirementEditor({
           aria-invalid={Boolean(fieldErrors.reviewer)}
           aria-describedby={fieldErrors.reviewer ? 'reviewer-error' : 'reviewer-help'}
         />
-        <small id="reviewer-help">Required for the review history. This label is self-reported on the public demo.</small>
+        <small id="reviewer-help">Required only when saving a correction, confirmation, or exclusion. This label is self-reported on the public demo.</small>
         {fieldErrors.reviewer && <small id="reviewer-error" className="field-error">{fieldErrors.reviewer}</small>}
 
         <label>
@@ -314,7 +314,7 @@ export function RequirementEditor({
         {dismissMode && (
           <div className="dismissal-panel">
             <label htmlFor="dismissal-reason">
-              Why is this not a requirement? <span aria-hidden="true">*</span>
+              Why should this item be excluded from proposal analysis? <span aria-hidden="true">*</span>
             </label>
             <textarea
               ref={dismissalReasonRef}
@@ -378,15 +378,15 @@ export function RequirementEditor({
         )}
       </section>
 
-      <div className="review-actions" aria-label="Review actions">
+      <div className="review-actions" aria-label="Requirement actions">
         <button className="button button--secondary" type="button" disabled={isSaving} onClick={() => void save(requirement.validation_status)}>
-          Save draft
+          Save changes
         </button>
         <button className="button button--primary" type="button" disabled={isSaving} onClick={() => void save('VALIDATED')}>
-          {isSaving ? 'Saving…' : 'Verify'}
+          {isSaving ? 'Saving…' : 'Confirm as written'}
         </button>
         <button className="button button--danger" type="button" disabled={isSaving} onClick={startDismissal}>
-          {dismissMode ? 'Confirm not a requirement' : 'Not a requirement'}
+          {dismissMode ? 'Confirm exclusion' : 'Exclude'}
         </button>
       </div>
     </aside>

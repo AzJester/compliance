@@ -48,7 +48,7 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null)
   const [selectionRetry, setSelectionRetry] = useState(0)
 
-  const transitionToProject = useCallback((projectId: string, stage = 'setup') => {
+  const transitionToProject = useCallback((projectId: string, stage = 'solicitation-files') => {
     if (selectedIdRef.current === projectId) return
     selectedIdRef.current = projectId
     selectionEpochRef.current += 1
@@ -122,8 +122,8 @@ export function App() {
           const requestedProject = projectFromUrl()
           const initialProject = projectResult.value.find((item) => item.id === requestedProject) ?? projectResult.value[0]
           const requestedStage = requestedProject === initialProject.id
-            ? new URLSearchParams(window.location.search).get('stage') ?? 'setup'
-            : 'setup'
+            ? new URLSearchParams(window.location.search).get('stage') ?? 'solicitation-files'
+            : 'solicitation-files'
           transitionToProject(initialProject.id, requestedStage)
         }
       } else {
@@ -315,7 +315,7 @@ export function App() {
           </button>
           <div className="brand" aria-label="RFP Compliance Workspace">
             <span className="brand__mark" aria-hidden="true">RC</span>
-            <span><strong>RFP Compliance</strong><small>Guided compliance workspace</small></span>
+            <span><strong>RFP Compliance</strong><small>Solicitation-to-proposal coverage</small></span>
           </div>
         </div>
         <div className="topbar__actions">
@@ -364,10 +364,6 @@ export function App() {
               isAnonymous={isAnonymous}
               onUpload={uploadDocuments}
               onRefresh={() => void loadDocuments(activeProject.id)}
-              onProjectUpdated={(project) => {
-                setSelectedProject(project)
-                setProjects((current) => current.map((item) => item.id === project.id ? project : item))
-              }}
             />
           ) : projectError && selectedId ? (
             <section className="project-load-error" aria-labelledby="project-load-error-title">
@@ -389,16 +385,16 @@ export function App() {
             <section className="welcome-state">
               <div className="welcome-state__mark" aria-hidden="true">RFP</div>
               <div className="section-kicker">Ready for intake</div>
-              <h1>{isAnonymous ? 'Build a shared compliance record' : 'Build a traceable compliance record'}</h1>
+              <h1>{isAnonymous ? 'Analyze a synthetic solicitation' : 'Analyze a solicitation'}</h1>
               <p>
                 {isAnonymous
-                  ? 'Create a public-demo project and follow a guided path from synthetic solicitation files to review-ready compliance findings.'
-                  : 'Create a project and follow a guided path from solicitation intake to review-ready compliance findings.'}
+                  ? 'Upload synthetic solicitation documents, see every extracted requirement, then compare a synthetic proposal against them.'
+                  : 'Upload solicitation documents, see every extracted requirement, then compare your proposal against them.'}
               </p>
               <ol>
-                <li><span>1</span><div><strong>Create a project</strong><small>Capture the opportunity and deadline</small></div></li>
-                <li><span>2</span><div><strong>Verify the package</strong><small>Check files, amendments, and versions</small></div></li>
-                <li><span>3</span><div><strong>Review compliance</strong><small>Resolve requirements and evidence</small></div></li>
+                <li><span>1</span><div><strong>Upload the solicitation</strong><small>Process the source documents</small></div></li>
+                <li><span>2</span><div><strong>See all requirements</strong><small>Correct only the exceptions</small></div></li>
+                <li><span>3</span><div><strong>Assess the proposal</strong><small>Find covered, partial, missing, and conflicting responses</small></div></li>
               </ol>
               <button className="button button--primary welcome-state__cta" type="button" onClick={() => setIsProjectWizardOpen(true)}>
                 Create your first project <span aria-hidden="true">→</span>

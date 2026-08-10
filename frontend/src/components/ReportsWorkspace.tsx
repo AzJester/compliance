@@ -24,6 +24,10 @@ function compact(value: string, length = 90) {
   return value.length > length ? `${value.slice(0, length - 1)}…` : value
 }
 
+function formatCoveragePercent(value: number) {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
   const [readiness, setReadiness] = useState<ReadinessSummary | null>(null)
   const [actions, setActions] = useState<ProjectAction[]>([])
@@ -92,41 +96,38 @@ export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
       <section className="product-panel" aria-labelledby="readiness-title">
         <header className="product-panel__header">
           <div>
-            <span className="product-eyebrow">Submission readiness</span>
-            <h2 id="readiness-title">Readiness and unresolved gaps</h2>
-            <p>Human verification—not automated matching—determines whether proposal coverage is ready.</p>
+            <span className="product-eyebrow">Automated proposal assessment</span>
+            <h2 id="readiness-title">Coverage summary</h2>
+            <p>This is an evidence-backed screening result, not a legal or contracting-officer determination. Reviewer confirmation is optional and intended for exceptions.</p>
           </div>
           {readiness && (
             <div className={`readiness-score${readiness.ready ? ' readiness-score--ready' : ''}`}>
-              <strong>{Math.round(readiness.readiness_percent)}%</strong><span>{readiness.ready ? 'Ready' : 'In progress'}</span>
+              <strong>{formatCoveragePercent(readiness.readiness_percent)}%</strong><span>{readiness.ready ? 'No gaps found' : readiness.crosswalk_total > 0 ? 'Attention needed' : 'Not analyzed'}</span>
             </div>
           )}
         </header>
 
-        {isLoading ? <div className="product-state" aria-busy="true">Calculating readiness…</div> : error ? <p className="product-error reports-message" role="alert">{error}</p> : readiness && (
+        {isLoading ? <div className="product-state" aria-busy="true">Calculating proposal coverage…</div> : error ? <p className="product-error reports-message" role="alert">{error}</p> : readiness && (
           <>
             <div className="readiness-metrics">
-              <article><span>Requirements verified</span><strong>{readiness.requirements_validated}/{readiness.requirements_total}</strong></article>
-              <article><span>CDRLs ready</span><strong>{readiness.cdrls_ready}/{readiness.cdrls_total}</strong></article>
-              <article className={readiness.cdrls_incomplete > 0 ? 'metric-warning' : undefined}><span>CDRLs incomplete</span><strong>{readiness.cdrls_incomplete}</strong></article>
-              <article className={readiness.cdrls_unreviewed > 0 || readiness.cdrls_stale > 0 ? 'metric-danger' : undefined}><span>CDRL review needed</span><strong>{readiness.cdrls_unreviewed + readiness.cdrls_stale}</strong></article>
-              <article><span>Crosswalk verified</span><strong>{readiness.crosswalk_verified}/{readiness.crosswalk_total}</strong></article>
+              <article><span>Requirements found</span><strong>{readiness.requirements_total}</strong></article>
+              <article><span>Requirements assessed</span><strong>{readiness.crosswalk_total}/{readiness.requirements_total}</strong></article>
               <article className="metric-good"><span>Covered</span><strong>{readiness.covered}</strong></article>
+              <article><span>Not applicable</span><strong>{readiness.n_a}</strong></article>
               <article className="metric-warning"><span>Partial</span><strong>{readiness.partial}</strong></article>
               <article className="metric-danger"><span>Missing</span><strong>{readiness.missing}</strong></article>
               <article className="metric-danger"><span>Conflicts</span><strong>{readiness.conflict}</strong></article>
-              <article><span>Unverified</span><strong>{readiness.unverified}</strong></article>
-              <article><span>Open actions</span><strong>{readiness.actions_open}</strong></article>
+              <article><span>Reviewer-confirmed (optional)</span><strong>{readiness.crosswalk_verified}</strong></article>
             </div>
-            <div className="readiness-next-action"><div><strong>Recommended next action</strong><p>{readiness.next_action ?? 'Review the current registers and download the compliance workbook.'}</p></div><button className="button button--secondary" type="button" onClick={() => void load()}>Refresh readiness</button></div>
-            {readiness.blocking_reasons.length > 0 && <section className="readiness-blockers" aria-labelledby="readiness-blockers-title"><h3 id="readiness-blockers-title">Blocking issues</h3><ul>{readiness.blocking_reasons.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></section>}
+            <div className="readiness-next-action"><div><strong>Assessment status</strong><p>{readiness.next_action ?? 'Review the coverage results and download the current records.'}</p></div><button className="button button--secondary" type="button" onClick={() => void load()}>Refresh assessment</button></div>
+            {readiness.blocking_reasons.length > 0 && <section className="readiness-blockers" aria-labelledby="readiness-blockers-title"><h3 id="readiness-blockers-title">Items needing attention</h3><ul>{readiness.blocking_reasons.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></section>}
           </>
         )}
       </section>
 
       <section className="product-panel" aria-labelledby="actions-title">
         <header className="product-panel__header compact-product-header">
-          <div><span className="product-eyebrow">Resolution ownership</span><h2 id="actions-title">Action register</h2><p>Assign gaps, deadlines, and resolution work without losing the related compliance context.</p></div>
+          <div><span className="product-eyebrow">Optional remediation</span><h2 id="actions-title">Action register</h2><p>Assign real gaps and resolution work without turning every extracted requirement into a task.</p></div>
           <div className="action-header-controls">
             {completedActions > 0 && (
               <button className="button button--quiet" type="button" aria-pressed={showCompletedActions} onClick={() => setShowCompletedActions((current) => !current)}>

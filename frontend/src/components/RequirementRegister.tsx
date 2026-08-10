@@ -21,17 +21,17 @@ function registerCopy(view: ProjectView) {
   if (view === 'section-l') return {
     kicker: 'Instructions to offerors',
     title: 'Section L proposal instructions',
-    description: 'Review proposal content, format, delivery, and submission instructions. Verify each item before using it in the proposal outline.',
+    description: 'Proposal content, format, delivery, and submission instructions extracted from the solicitation.',
   }
   if (view === 'section-m') return {
     kicker: 'Evaluation criteria',
     title: 'Section M evaluation criteria',
-    description: 'Review factors, subfactors, rating criteria, and evaluation language that should shape the proposal response.',
+    description: 'Factors, subfactors, rating criteria, and evaluation language that should shape the proposal response.',
   }
   return {
-    kicker: 'Requirement candidates',
-    title: 'Requirement review queue',
-    description: 'Verify candidate requirements against their source before assigning or crosswalking them.',
+    kicker: 'Extracted solicitation obligations',
+    title: 'Requirements inventory',
+    description: 'Every extracted requirement is included in proposal analysis unless you explicitly exclude it.',
   }
 }
 
@@ -53,7 +53,7 @@ export function RequirementRegister({
   view,
   selectedId,
   onSelect,
-  initialStatus = 'PENDING',
+  initialStatus = 'ALL',
   initialSection = 'ALL',
   initialCategory = 'ALL',
   onVisibleRequirementsChange,
@@ -162,12 +162,12 @@ export function RequirementRegister({
           </select>
         </label>
         <label>
-          <span>Review status</span>
+          <span>Inventory status</span>
           <select value={status} onChange={(event) => setStatus(event.target.value as ValidationStatus | 'ALL')}>
             <option value="ALL">All statuses</option>
-            <option value="PENDING">Pending review</option>
-            <option value="VALIDATED">Verified</option>
-            <option value="DISMISSED">Not a requirement</option>
+            <option value="PENDING">As extracted</option>
+            <option value="VALIDATED">Reviewer confirmed</option>
+            <option value="DISMISSED">Excluded</option>
           </select>
         </label>
         <label>
@@ -185,12 +185,12 @@ export function RequirementRegister({
       {filtered.length === 0 ? (
         <div className="state-card register-empty">
           <div className="state-card__icon" aria-hidden="true">§</div>
-          <strong>{status === 'PENDING' ? 'No pending requirements' : 'No matching requirements'}</strong>
+          <strong>{status === 'PENDING' ? 'No as-extracted requirements' : 'No matching requirements'}</strong>
           <p>
             {requirements.length === 0
               ? 'Upload and process solicitation documents, then run requirement extraction.'
               : status === 'PENDING'
-                ? 'This queue is complete. Show all requirements to review prior decisions.'
+                ? 'Every requirement has either been reviewer-confirmed or excluded. Show all to view the complete inventory.'
                 : 'Adjust or clear the filters to broaden the results.'}
           </p>
           {requirements.length > 0 && status === 'PENDING' && (
@@ -219,7 +219,7 @@ export function RequirementRegister({
                       <span>{requirement.source_locator || 'Locator unavailable'}</span>
                     </div>
                     {!duplicateSource && <blockquote>{requirement.source_text}</blockquote>}
-                    <span className="review-link">Open review <span aria-hidden="true">→</span></span>
+                    <span className="review-link">Open details <span aria-hidden="true">→</span></span>
                   </button>
                 </li>
               )

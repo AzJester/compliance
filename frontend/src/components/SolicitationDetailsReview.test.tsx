@@ -277,7 +277,7 @@ describe('solicitation details review', () => {
 })
 
 describe('role-aware solicitation upload', () => {
-  it('requires and submits an explicit base-solicitation role for the selected batch', async () => {
+  it('defaults and submits the base-solicitation role for the selected batch', async () => {
     const onUpload = vi.fn(async () => undefined)
     const user = userEvent.setup()
     render(<DocumentUpload state="idle" message={null} isAnonymous onUpload={onUpload} />)
@@ -286,7 +286,7 @@ describe('role-aware solicitation upload', () => {
     await user.upload(screen.getByLabelText(/choose documents/i), file)
     const uploadButton = screen.getByRole('button', { name: /upload 1 file/i })
     expect(uploadButton).toBeDisabled()
-    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
+    expect(screen.getByLabelText(/document type/i)).toHaveValue('BASE_SOLICITATION')
     await user.type(screen.getByLabelText(/package note/i), 'Synthetic base package')
     await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC data/i }))
     await user.click(uploadButton)

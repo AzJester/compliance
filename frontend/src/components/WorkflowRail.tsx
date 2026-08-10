@@ -1,13 +1,9 @@
 import { type KeyboardEvent } from 'react'
 
 export type WorkflowStageId =
-  | 'setup'
   | 'solicitation-files'
-  | 'verify-package'
   | 'requirements'
-  | 'proposal-response'
-  | 'crosswalk'
-  | 'reports'
+  | 'proposal-compliance'
 
 export interface WorkflowStage {
   id: WorkflowStageId

@@ -5,13 +5,14 @@ interface DocumentUploadProps {
   state: UploadState
   message: string | null
   isAnonymous: boolean
+  busyLabel?: string
   onUpload: (files: File[], profile: DocumentProfileUpdate) => Promise<void>
 }
 
 const acceptedExtensions = ['pdf', 'docx', 'xlsx', 'pptx', 'zip']
 
 const sourceRoles: Array<{ value: DocumentClassification; label: string }> = [
-  { value: 'BASE_SOLICITATION', label: 'Base solicitation / RFP' },
+  { value: 'BASE_SOLICITATION', label: 'Solicitation document (default)' },
   { value: 'AMENDMENT', label: 'Amendment' },
   { value: 'ATTACHMENT', label: 'Attachment or exhibit' },
   { value: 'CDRL', label: 'CDRL / DD Form 1423' },
@@ -23,11 +24,11 @@ function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`
 }
 
-export function DocumentUpload({ state, message, isAnonymous, onUpload }: DocumentUploadProps) {
+export function DocumentUpload({ state, message, isAnonymous, busyLabel, onUpload }: DocumentUploadProps) {
   const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [publicDataAcknowledged, setPublicDataAcknowledged] = useState(false)
-  const [role, setRole] = useState<DocumentClassification | ''>('')
+  const [role, setRole] = useState<DocumentClassification>('BASE_SOLICITATION')
   const [roleNote, setRoleNote] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -51,7 +52,7 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
   }
 
   const submit = async () => {
-    if (!files.length || !role || (isAnonymous && !publicDataAcknowledged)) return
+    if (!files.length || (isAnonymous && !publicDataAcknowledged)) return
     try {
       await onUpload(files, {
         classification: role,
@@ -59,7 +60,6 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
       })
       setFiles([])
       setPublicDataAcknowledged(false)
-      setRole('')
       setRoleNote('')
     } catch {
       // The parent reports the actionable API error and preserves this selection for retry.
@@ -129,7 +129,7 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
               onClick={() => {
                 setFiles([])
                 setPublicDataAcknowledged(false)
-                setRole('')
+                setRole('BASE_SOLICITATION')
                 setRoleNote('')
               }}
               disabled={isUploading}
@@ -158,19 +158,17 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
           </ul>
           <div className="upload-role">
             <div className="upload-role__heading">
-              <strong>Assign one role to this upload batch</strong>
-              <span>Upload files with different roles in separate batches. Roles are never guessed silently.</span>
+              <strong>Document type</strong>
+              <span>The default works for normal solicitation uploads. Change it only when a file has a special role.</span>
             </div>
             <div className="upload-role__fields">
               <label>
-                Document role <span aria-hidden="true">*</span>
+                Document type
                 <select
                   value={role}
-                  onChange={(event) => setRole(event.target.value as DocumentClassification | '')}
+                  onChange={(event) => setRole(event.target.value as DocumentClassification)}
                   disabled={isUploading}
-                  required
                 >
-                  <option value="">Choose a role…</option>
                   {sourceRoles.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
@@ -206,10 +204,10 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
             className="button button--primary"
             type="button"
             onClick={submit}
-            disabled={isUploading || !role || (isAnonymous && !publicDataAcknowledged)}
+            disabled={isUploading || (isAnonymous && !publicDataAcknowledged)}
           >
             {isUploading
-              ? isAnonymous ? 'Uploading to shared storage…' : 'Uploading files…'
+              ? busyLabel || (isAnonymous ? 'Uploading to shared storage…' : 'Uploading files…')
               : `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'}${isAnonymous ? ' to shared storage' : ''}`}
           </button>
         </div>
@@ -217,8 +215,8 @@ export function DocumentUpload({ state, message, isAnonymous, onUpload }: Docume
 
       {isUploading && (
         <div className="upload-progress" role="status">
-          <progress aria-label="Document upload in progress" />
-          <span>Hashing and storing files…</span>
+          <progress aria-label="Document processing in progress" />
+          <span>{busyLabel || 'Hashing and storing files…'}</span>
         </div>
       )}
       {message && state !== 'uploading' && (

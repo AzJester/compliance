@@ -30,10 +30,10 @@ type FilterPreset = {
   category: RequirementCategory | 'ALL'
 }
 
-const pendingPreset: FilterPreset = {
+const allRequirementsPreset: FilterPreset = {
   key: 0,
-  label: 'Pending review',
-  status: 'PENDING',
+  label: 'All requirements',
+  status: 'ALL',
   section: 'ALL',
   category: 'ALL',
 }
@@ -58,7 +58,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
   const [saveError, setSaveError] = useState<string | null>(null)
   const [announcement, setAnnouncement] = useState('')
   const [dataProjectId, setDataProjectId] = useState(projectId)
-  const [filterPreset, setFilterPreset] = useState<FilterPreset>(pendingPreset)
+  const [filterPreset, setFilterPreset] = useState<FilterPreset>(allRequirementsPreset)
   const [reviewQueueIds, setReviewQueueIds] = useState<string[]>([])
   const [editorDirty, setEditorDirty] = useState(false)
   const mountedRef = useRef(true)
@@ -93,7 +93,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
     setIsSaving(false)
     setSaveError(null)
     setAnnouncement('')
-    setFilterPreset(pendingPreset)
+    setFilterPreset(allRequirementsPreset)
     setReviewQueueIds([])
     setEditorDirty(false)
     return () => {
@@ -113,7 +113,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
     setSaveError(null)
     setEditorDirty(false)
     setReviewQueueIds([])
-    setFilterPreset((current) => ({ ...pendingPreset, key: current.key + 1 }))
+    setFilterPreset((current) => ({ ...allRequirementsPreset, key: current.key + 1 }))
   }, [view])
 
   const isCurrent = useCallback((requestProject: string) => (
@@ -203,7 +203,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
       setRequirements(nextRequirements)
       setCdrls(nextCdrls)
       hasLoadedRef.current = true
-      setFilterPreset((current) => ({ ...pendingPreset, key: current.key + 1 }))
+      setFilterPreset((current) => ({ ...allRequirementsPreset, key: current.key + 1 }))
       const createdCopy = summary.requirements_created === 0 && summary.cdrls_created === 0
         ? 'No new records were created.'
         : `${summary.requirements_created} requirement candidates and ${summary.cdrls_created} CDRL records were created.`
@@ -234,7 +234,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
     savingRef.current = true
     setIsSaving(true)
     setSaveError(null)
-    setAnnouncement('Saving requirement review.')
+    setAnnouncement('Saving requirement correction.')
     try {
       const updated = await api.updateRequirement(requestProject, requirementId, update)
       if (!isCurrent(requestProject)) return
@@ -249,7 +249,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
             }
           : cdrl
       )))
-      setAnnouncement(`Requirement review saved as ${statusLabel(updated.validation_status).toLowerCase()}.`)
+      setAnnouncement(`Requirement saved as ${statusLabel(updated.validation_status).toLowerCase()}.`)
       void onProgressChanged?.()
       setEditorDirty(false)
       if (selectedRequirementRef.current === requirementId) {
@@ -269,7 +269,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
         await loadData()
         if (!isCurrent(requestProject) || selectedRequirementRef.current !== requirementId) return
       }
-      setSaveError(message(error, 'Unable to save the review decision.'))
+      setSaveError(message(error, 'Unable to save the requirement change.'))
     } finally {
       savingRef.current = false
       if (isCurrent(requestProject)) setIsSaving(false)
@@ -277,7 +277,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
   }
 
   const canLeaveEditor = useCallback(() => (
-    !editorDirty || window.confirm('Discard your unsaved review changes?')
+    !editorDirty || window.confirm('Discard your unsaved requirement changes?')
   ), [editorDirty])
 
   const selectRequirement = useCallback((requirementId: string) => {
@@ -361,17 +361,17 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
     <div className="requirements-workspace">
       <div className="requirements-toolbar">
         <div>
-          <div className="section-kicker">Compliance baseline</div>
-          <h2>Requirement review workspace</h2>
-          <p>Find requirement candidates, verify them against the source, and preserve each human decision.</p>
+          <div className="section-kicker">Solicitation baseline</div>
+          <h2>Extracted requirement set</h2>
+          <p>All extracted requirements appear immediately. Open an item only to correct its text, confirm it, or exclude it from proposal analysis.</p>
         </div>
         <button className="button button--primary extract-button" type="button" onClick={() => void extract()} disabled={isExtracting}>
           <span aria-hidden="true">⌁</span>
           {isExtracting
             ? 'Finding requirements…'
             : hasExistingRecords
-              ? 'Re-run extraction'
-              : 'Find requirements'}
+              ? 'Refresh requirements'
+              : 'Extract requirements'}
         </button>
       </div>
 
@@ -398,7 +398,7 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
             <div><dt>New CDRLs</dt><dd>{extractionSummary.cdrls_created}</dd></div>
             <div><dt>Existing CDRLs</dt><dd>{extractionSummary.cdrls_reused}</dd></div>
             <div><dt>Total requirements</dt><dd>{extractionSummary.total_requirements}</dd></div>
-            <div><dt>Pending review</dt><dd>{extractionSummary.pending_requirements}</dd></div>
+            <div><dt>As extracted</dt><dd>{extractionSummary.pending_requirements}</dd></div>
           </dl>
         </section>
       )}
@@ -409,23 +409,23 @@ export function RequirementsWorkspace({ projectId, view, onProgressChanged }: Re
         <div className="requirements-alert requirements-alert--warning" role="status">
           <div>
             <strong>No processed documents were available</strong>
-            <span>Return to Solicitation Files and process document text before trying again.</span>
+            <span>Return to Solicitation and upload a searchable source document before trying again.</span>
           </div>
         </div>
       )}
 
-      <section className="requirement-summary" aria-label="Requirement review summary">
+      <section className="requirement-summary" aria-label="Requirement inventory summary">
         <button type="button" aria-pressed={filterPreset.label === 'All requirements'} onClick={() => applyFilterPreset('All requirements')}>
           <span>Total</span><strong>{counts.total}</strong>
         </button>
-        <button type="button" aria-pressed={filterPreset.label === 'Pending review'} onClick={() => applyFilterPreset('Pending review', 'PENDING')}>
-          <span>Pending review</span><strong>{counts.pending}</strong>
+        <button type="button" aria-pressed={filterPreset.label === 'As extracted'} onClick={() => applyFilterPreset('As extracted', 'PENDING')}>
+          <span>As extracted</span><strong>{counts.pending}</strong>
         </button>
-        <button type="button" aria-pressed={filterPreset.label === 'Verified'} onClick={() => applyFilterPreset('Verified', 'VALIDATED')}>
-          <span>Verified</span><strong>{counts.validated}</strong>
+        <button type="button" aria-pressed={filterPreset.label === 'Reviewer confirmed'} onClick={() => applyFilterPreset('Reviewer confirmed', 'VALIDATED')}>
+          <span>Reviewer confirmed</span><strong>{counts.validated}</strong>
         </button>
-        <button type="button" aria-pressed={filterPreset.label === 'Not a requirement'} onClick={() => applyFilterPreset('Not a requirement', 'DISMISSED')}>
-          <span>Not a requirement</span><strong>{counts.dismissed}</strong>
+        <button type="button" aria-pressed={filterPreset.label === 'Excluded'} onClick={() => applyFilterPreset('Excluded', 'DISMISSED')}>
+          <span>Excluded</span><strong>{counts.dismissed}</strong>
         </button>
         <button type="button" disabled={view !== 'requirements'} aria-pressed={filterPreset.label === 'Section L'} onClick={() => applyFilterPreset('Section L', 'ALL', 'L')}>
           <span>Section L</span><strong>{counts.sectionL}</strong>

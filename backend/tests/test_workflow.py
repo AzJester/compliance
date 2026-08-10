@@ -11,6 +11,7 @@ from backend.app.config import Settings
 from backend.app.database import create_database, initialize_database
 from backend.app.main import create_app
 from backend.app.models import CDRL, Blob, Document, DocumentStatus, Project
+from backend.app.workflow_api import _coverage_percent
 
 from .conftest import make_test_client, pdf_bytes, seed_extracted_document
 
@@ -28,6 +29,12 @@ def _create_project(client: TestClient, name: str = "Synthetic RFP") -> dict[str
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_coverage_percent_never_rounds_incomplete_coverage_to_100() -> None:
+    assert _coverage_percent(1_249, 1_250) == 99.92
+    assert _coverage_percent(19_999, 20_000) == 99.99
+    assert _coverage_percent(1_250, 1_250) == 100.0
 
 
 def _classify(
@@ -364,11 +371,22 @@ def test_proposal_documents_are_excluded_from_requirement_extraction_and_crosswa
     assert finding["candidate_status"] == "COVERED"
     assert finding["status"] == "COVERED"
     assert finding["human_verified"] is False
+    assert finding["needs_attention"] is False
+    assert finding["attention_reasons"] == []
     assert finding["evidence"][0]["document_id"] == proposal_id
     assert finding["evidence"][0]["excerpt"] == requirement_text
     readiness = client.get(f"/api/projects/{project_id}/readiness").json()
+    assert readiness["ready"] is True
+    assert readiness["readiness_percent"] == 100
+    assert readiness["requirements_pending"] == 1
     assert readiness["crosswalk_verified"] == 0
     assert readiness["unverified"] == 1
+    assert readiness["blocking_reasons"] == []
+    assert [stage["stage"] for stage in readiness["stages"]] == [
+        "SOLICITATION_FILES",
+        "REQUIREMENTS",
+        "CROSSWALK",
+    ]
 
     assert (
         client.patch(
@@ -441,7 +459,7 @@ def test_proposal_upload_classification_is_atomic(client: TestClient) -> None:
     assert missing_volume_name.status_code == 422
 
 
-def test_numeric_conflict_and_verified_rerun_becomes_stale(client: TestClient) -> None:
+def test_confirmation_only_rerun_adopts_fresh_automated_result(client: TestClient) -> None:
     project = _create_project(client)
     project_id = str(project["id"])
     solicitation_id = seed_extracted_document(
@@ -477,15 +495,18 @@ def test_numeric_conflict_and_verified_rerun_becomes_stale(client: TestClient) -
 
     rerun = client.post(f"/api/projects/{project_id}/crosswalk/generate")
     assert rerun.status_code == 200
-    assert rerun.json()["verified_findings_marked_stale"] == 1
-    stale = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
-    assert stale["candidate_status"] == "COVERED"
-    assert stale["status"] == "CONFLICT"
-    assert stale["human_verified"] is True
-    assert stale["stale"] is True
+    assert rerun.json()["verified_findings_marked_stale"] == 0
+    refreshed = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
+    assert refreshed["candidate_status"] == "COVERED"
+    assert refreshed["status"] == "COVERED"
+    assert refreshed["human_verified"] is False
+    assert refreshed["stale"] is False
+    assert refreshed["needs_attention"] is False
     readiness = client.get(f"/api/projects/{project_id}/readiness").json()
     assert readiness["crosswalk_verified"] == 0
     assert readiness["unverified"] == 1
+    assert readiness["ready"] is True
+    assert readiness["blocking_reasons"] == []
 
 
 def test_crosswalk_matches_evidence_wrapped_across_extracted_lines(client: TestClient) -> None:
@@ -564,7 +585,9 @@ def test_manual_evidence_is_exact_bounded_and_proposal_only(client: TestClient) 
     )
 
 
-def test_complete_human_review_can_reach_ready(client: TestClient) -> None:
+def test_automated_crosswalk_can_reach_ready_without_approval_clicks(
+    client: TestClient,
+) -> None:
     project = _create_project(client)
     project_id = str(project["id"])
     requirement_text = "The offeror shall submit a transition plan."
@@ -582,39 +605,106 @@ def test_complete_human_review_can_reach_ready(client: TestClient) -> None:
     )
     _classify(client, project_id, solicitation_id, "BASE_SOLICITATION")
     _classify(client, project_id, proposal_id, "PROPOSAL_VOLUME", volume_name="Volume I")
-    requirement = None
     _extract(client, project_id)
+    requirement = client.get(f"/api/projects/{project_id}/requirements").json()[0]
+    assert requirement["validation_status"] == "PENDING"
+    assert client.get(f"/api/projects/{project_id}/intake-verifications").json() == []
+    generated = client.post(f"/api/projects/{project_id}/crosswalk/generate")
+    assert generated.status_code == 200
+    readiness = client.get(f"/api/projects/{project_id}/readiness")
+    assert readiness.status_code == 200
+    assert readiness.json()["ready"] is True
+    assert readiness.json()["readiness_percent"] == 100
+    assert readiness.json()["requirements_pending"] == 1
+    assert readiness.json()["crosswalk_verified"] == 0
+    assert readiness.json()["unverified"] == 1
+    assert readiness.json()["blocking_reasons"] == []
+
+
+def test_validation_status_only_does_not_stale_current_crosswalk(
+    client: TestClient,
+) -> None:
+    project = _create_project(client, "Optional Validation")
+    project_id = str(project["id"])
+    requirement_text = "The offeror shall submit a transition plan."
+    solicitation_id = seed_extracted_document(
+        client,
+        project_id,
+        f"SECTION L - INSTRUCTIONS\n{requirement_text}",
+        name="rfp.pdf",
+    )
+    proposal_id = seed_extracted_document(
+        client,
+        project_id,
+        requirement_text,
+        name="volume-i.pdf",
+    )
+    _classify(client, project_id, solicitation_id, "BASE_SOLICITATION")
+    _classify(client, project_id, proposal_id, "PROPOSAL_VOLUME", volume_name="Volume I")
+    _extract(client, project_id)
+    assert client.post(f"/api/projects/{project_id}/crosswalk/generate").status_code == 200
+
     requirement = client.get(f"/api/projects/{project_id}/requirements").json()[0]
     validated = client.patch(
         f"/api/projects/{project_id}/requirements/{requirement['id']}",
         json={
             "validation_status": "VALIDATED",
-            "reviewer": "Requirements Reviewer",
+            "reviewer": "Optional Reviewer",
             "expected_updated_at": requirement["updated_at"],
         },
     )
-    assert validated.status_code == 200
-
-    checks = client.post(f"/api/projects/{project_id}/intake-verifications/initialize").json()
-    for check in checks:
-        response = client.patch(
-            f"/api/projects/{project_id}/intake-verifications/{check['id']}",
-            json={"status": "VERIFIED", "reviewer": "Intake Reviewer"},
-        )
-        assert response.status_code == 200
-
-    client.post(f"/api/projects/{project_id}/crosswalk/generate")
+    assert validated.status_code == 200, validated.text
     finding = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
-    response = client.patch(
-        f"/api/projects/{project_id}/crosswalk/{finding['id']}",
-        json={"human_verified": True, "reviewer": "Crosswalk Reviewer"},
+    assert finding["stale"] is False
+    readiness = client.get(f"/api/projects/{project_id}/readiness").json()
+    assert readiness["ready"] is True
+    assert readiness["requirements_validated"] == 1
+    assert not any("Regenerate" in reason for reason in readiness["blocking_reasons"])
+
+
+def test_dismiss_and_reopen_preserve_audit_and_refresh_the_active_crosswalk(
+    client: TestClient,
+) -> None:
+    ready = _ready_project(client)
+    project_id = str(ready["project_id"])
+    requirement = ready["requirement"]
+    assert isinstance(requirement, dict)
+    requirement_url = f"/api/projects/{project_id}/requirements/{requirement['id']}"
+
+    dismissed = client.patch(
+        requirement_url,
+        json={
+            "validation_status": "DISMISSED",
+            "reviewer": "Exception Reviewer",
+            "review_note": "Not applicable to this proposal.",
+            "expected_updated_at": requirement["updated_at"],
+        },
     )
-    assert response.status_code == 200
-    readiness = client.get(f"/api/projects/{project_id}/readiness")
-    assert readiness.status_code == 200
-    assert readiness.json()["ready"] is True
-    assert readiness.json()["readiness_percent"] == 100
-    assert readiness.json()["blocking_reasons"] == []
+    assert dismissed.status_code == 200, dismissed.text
+    assert client.get(f"/api/projects/{project_id}/crosswalk").json() == []
+    assert client.get(f"/api/projects/{project_id}/readiness").json()["requirements_total"] == 0
+
+    reopened = client.patch(
+        requirement_url,
+        json={
+            "validation_status": "PENDING",
+            "reviewer": "Exception Reviewer",
+            "expected_updated_at": dismissed.json()["updated_at"],
+        },
+    )
+    assert reopened.status_code == 200, reopened.text
+    before_regeneration = client.get(f"/api/projects/{project_id}/readiness").json()
+    assert any("stale crosswalk" in reason for reason in before_regeneration["blocking_reasons"])
+
+    assert client.post(f"/api/projects/{project_id}/crosswalk/generate").status_code == 200
+    refreshed = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
+    assert refreshed["stale"] is False
+    assert refreshed["human_verified"] is False
+    after_regeneration = client.get(f"/api/projects/{project_id}/readiness").json()
+    assert after_regeneration["ready"] is True
+    assert after_regeneration["blocking_reasons"] == []
+    reviews = client.get(f"{requirement_url}/reviews").json()
+    assert [review["action"] for review in reviews] == ["VALIDATED", "DISMISSED", "REOPENED"]
 
 
 def test_requirement_change_stales_crosswalk_and_blocks_readiness(client: TestClient) -> None:
@@ -640,6 +730,91 @@ def test_requirement_change_stales_crosswalk_and_blocks_readiness(client: TestCl
     assert any("Regenerate" in reason for reason in readiness["blocking_reasons"])
 
 
+def test_manual_crosswalk_override_requires_human_verification(
+    client: TestClient,
+) -> None:
+    ready = _ready_project(client)
+    project_id = str(ready["project_id"])
+    finding = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
+    unverified = client.patch(
+        f"/api/projects/{project_id}/crosswalk/{finding['id']}",
+        json={"human_verified": False},
+    )
+    assert unverified.status_code == 200, unverified.text
+
+    rejected = client.patch(
+        f"/api/projects/{project_id}/crosswalk/{finding['id']}",
+        json={"status": "PARTIAL", "reviewer": "Coverage Reviewer"},
+    )
+    assert rejected.status_code == 422
+    assert "Manual status overrides" in rejected.text
+
+    accepted = client.patch(
+        f"/api/projects/{project_id}/crosswalk/{finding['id']}",
+        json={
+            "status": "PARTIAL",
+            "human_verified": True,
+            "reviewer": "Coverage Reviewer",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["needs_attention"] is True
+    readiness = client.get(f"/api/projects/{project_id}/readiness").json()
+    assert readiness["ready"] is False
+    assert any("coverage gap" in reason for reason in readiness["blocking_reasons"])
+
+    with client.app.state.session_factory() as session:
+        proposal = session.scalar(select(Document).where(Document.id == ready["proposal_id"]))
+        assert proposal is not None
+        proposal.extracted_text = "Unrelated synthetic proposal text."
+        proposal.extraction_count = len(proposal.extracted_text)
+        session.commit()
+
+    rerun = client.post(f"/api/projects/{project_id}/crosswalk/generate")
+    assert rerun.status_code == 200
+    assert rerun.json()["verified_findings_marked_stale"] == 1
+    stale_override = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
+    assert stale_override["candidate_status"] == "MISSING"
+    assert stale_override["status"] == "PARTIAL"
+    assert stale_override["human_verified"] is True
+    assert stale_override["stale"] is True
+    assert stale_override["needs_attention"] is True
+    assert any("Reanalyze" in reason for reason in stale_override["attention_reasons"])
+
+
+def test_actions_and_saved_workflow_state_do_not_gate_automated_readiness(
+    client: TestClient,
+) -> None:
+    ready = _ready_project(client)
+    project_id = str(ready["project_id"])
+    action = client.post(
+        f"/api/projects/{project_id}/actions",
+        json={"title": "Optional follow-up"},
+    )
+    assert action.status_code == 201, action.text
+    blocked_action = client.patch(
+        f"/api/projects/{project_id}/actions/{action.json()['id']}",
+        json={"status": "BLOCKED"},
+    )
+    assert blocked_action.status_code == 200, blocked_action.text
+    saved_workflow = client.patch(
+        f"/api/projects/{project_id}/workflow",
+        json={
+            "stage": "VERIFY_PACKAGE",
+            "status": "BLOCKED",
+            "blocker_summary": "Legacy manual blocker",
+        },
+    )
+    assert saved_workflow.status_code == 200, saved_workflow.text
+
+    readiness = client.get(f"/api/projects/{project_id}/readiness").json()
+    assert readiness["ready"] is True
+    assert readiness["actions_blocked"] == 1
+    assert readiness["workflow_stage"] == "CROSSWALK"
+    assert readiness["workflow_status"] == "COMPLETE"
+    assert readiness["blocking_reasons"] == []
+
+
 def test_solicitation_inventory_change_resets_verification_and_requires_extraction(
     client: TestClient,
 ) -> None:
@@ -660,7 +835,7 @@ def test_solicitation_inventory_change_resets_verification_and_requires_extracti
     readiness = client.get(f"/api/projects/{project_id}/readiness").json()
     assert readiness["ready"] is False
     assert any("new or reclassified" in reason for reason in readiness["blocking_reasons"])
-    assert any("verification checklist" in reason for reason in readiness["blocking_reasons"])
+    assert not any("verification checklist" in reason for reason in readiness["blocking_reasons"])
 
 
 def test_reference_document_is_excluded_from_requirement_extraction_and_readiness(
@@ -763,7 +938,7 @@ def test_reclassified_proposal_evidence_is_invalid_even_with_another_volume(
     assert any("Regenerate" in reason for reason in readiness["blocking_reasons"])
 
 
-def test_complete_cdrl_requires_fresh_human_adjudication_and_is_project_scoped(
+def test_complete_cdrl_adjudication_is_optional_and_project_scoped(
     client: TestClient,
 ) -> None:
     project = _create_project(client)
@@ -794,7 +969,7 @@ def test_complete_cdrl_requires_fresh_human_adjudication_and_is_project_scoped(
     assert readiness["cdrls_total"] == 1
     assert readiness["cdrls_ready"] == 0
     assert readiness["cdrls_unreviewed"] == 1
-    assert any("Human-review 1 CDRL" in reason for reason in readiness["blocking_reasons"])
+    assert not any("CDRL" in reason for reason in readiness["blocking_reasons"])
 
     url = f"/api/projects/{project_id}/cdrls/{cdrl_id}/adjudication"
     assert client.put(url, json={"status": "REVIEWED"}).status_code == 422
@@ -820,7 +995,7 @@ def test_complete_cdrl_requires_fresh_human_adjudication_and_is_project_scoped(
     assert stale["effective_ready"] is False
     stale_readiness = client.get(f"/api/projects/{project_id}/readiness").json()
     assert stale_readiness["cdrls_stale"] == 1
-    assert any("Re-review 1 CDRL" in reason for reason in stale_readiness["blocking_reasons"])
+    assert not any("CDRL" in reason for reason in stale_readiness["blocking_reasons"])
 
     refreshed = client.put(
         url,
@@ -877,7 +1052,7 @@ def test_complete_cdrl_requires_fresh_human_adjudication_and_is_project_scoped(
     assert client.get(f"/api/projects/{project_id}/readiness").json()["cdrls_total"] == 0
 
 
-def test_incomplete_cdrl_requires_explicit_waiver_with_reason(client: TestClient) -> None:
+def test_optional_incomplete_cdrl_waiver_requires_a_reason(client: TestClient) -> None:
     project = _create_project(client)
     project_id = str(project["id"])
     _, cdrl = _extract_one_cdrl(client, project_id, complete=False)
@@ -894,7 +1069,7 @@ def test_incomplete_cdrl_requires_explicit_waiver_with_reason(client: TestClient
     readiness = client.get(f"/api/projects/{project_id}/readiness").json()
     assert readiness["cdrls_incomplete"] == 1
     assert readiness["cdrls_ready"] == 0
-    assert any("explicit reviewer waiver" in reason for reason in readiness["blocking_reasons"])
+    assert not any("reviewer waiver" in reason for reason in readiness["blocking_reasons"])
 
     assert (
         client.put(
@@ -985,7 +1160,8 @@ def test_manual_crosswalk_evidence_can_be_deleted_but_automated_evidence_cannot(
 
     assert client.post(f"/api/projects/{project_id}/crosswalk/generate").status_code == 200
     regenerated = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
-    assert regenerated["stale"] is True
+    assert regenerated["stale"] is False
+    assert regenerated["human_verified"] is False
     assert all(not item["is_manual"] for item in regenerated["evidence"])
 
 
