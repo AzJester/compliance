@@ -149,7 +149,14 @@ describe('release integrity workflows', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
 
-    render(<CrosswalkWorkspace projectId="project-1" proposalDocuments={[]} />)
+    render(
+      <CrosswalkWorkspace
+        projectId="project-1"
+        proposalDocuments={[]}
+        isAnalysisBusy={false}
+        onAnalysisBusyChange={vi.fn()}
+      />,
+    )
     await user.click(await screen.findByRole('button', { name: /covered 1/i }))
     await user.click(screen.getByRole('button', { name: new RegExp(requirement.requirement_text, 'i') }))
     const remove = await screen.findByRole('button', { name: /remove manual evidence/i })
@@ -178,7 +185,14 @@ describe('release integrity workflows', () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(findings)))
     const user = userEvent.setup()
 
-    render(<CrosswalkWorkspace projectId="project-1" proposalDocuments={[]} />)
+    render(
+      <CrosswalkWorkspace
+        projectId="project-1"
+        proposalDocuments={[]}
+        isAnalysisBusy={false}
+        onAnalysisBusyChange={vi.fn()}
+      />,
+    )
 
     expect(await screen.findByRole('button', { name: /Synthetic requirement 1(?:\D|$)/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Synthetic requirement 26/i })).not.toBeInTheDocument()

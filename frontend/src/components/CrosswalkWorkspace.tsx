@@ -12,6 +12,8 @@ import './product-workflow.css'
 interface CrosswalkWorkspaceProps {
   projectId: string
   proposalDocuments: ProjectDocument[]
+  isAnalysisBusy: boolean
+  onAnalysisBusyChange: (isBusy: boolean) => void
   onContinue?: () => void
 }
 
@@ -33,7 +35,13 @@ function needsAttention(finding: CrosswalkFinding) {
     || (evidenceStatuses.has(finding.status) && finding.evidence.length === 0)
 }
 
-export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }: CrosswalkWorkspaceProps) {
+export function CrosswalkWorkspace({
+  projectId,
+  proposalDocuments,
+  isAnalysisBusy,
+  onAnalysisBusyChange,
+  onContinue,
+}: CrosswalkWorkspaceProps) {
   const [findings, setFindings] = useState<CrosswalkFinding[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<CrosswalkFilter>('ATTENTION')
@@ -44,16 +52,24 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [announcement, setAnnouncement] = useState('')
+  const usableProposalDocuments = useMemo(
+    () => proposalDocuments.filter((document) => (
+      document.status === 'EXTRACTED' && (document.extraction_count ?? 0) > 0
+    )),
+    [proposalDocuments],
+  )
 
-  const load = async () => {
+  const load = async ({ clearError = true, reportError = true } = {}) => {
     setIsLoading(true)
-    setError(null)
+    if (clearError) setError(null)
     try {
       const next = await api.listCrosswalk(projectId)
       setFindings(next)
       setSelectedId((current) => current && next.some((item) => item.id === current) ? current : null)
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load crosswalk findings.')
+      if (reportError) {
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load crosswalk findings.')
+      }
     } finally {
       setIsLoading(false)
     }
@@ -63,6 +79,7 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
 
   const generate = async () => {
     setIsGenerating(true)
+    onAnalysisBusyChange(true)
     setError(null)
     setAnnouncement('Analyzing proposal coverage.')
     try {
@@ -71,8 +88,12 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
       setAnnouncement(`Crosswalk updated for ${summary.requirements_analyzed} requirements.`)
       onContinue?.()
     } catch (generationError) {
-      setError(generationError instanceof Error ? generationError.message : 'Unable to generate the crosswalk.')
+      await load({ clearError: false, reportError: false })
+      const detail = generationError instanceof Error ? generationError.message : 'Unable to generate the crosswalk.'
+      setError(`The proposal assessment request failed: ${detail}. Existing results were refreshed; retry only if no current findings appear.`)
+      setAnnouncement('The assessment request failed. Existing proposal coverage results were refreshed.')
     } finally {
+      onAnalysisBusyChange(false)
       setIsGenerating(false)
     }
   }
@@ -142,15 +163,17 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
           <h2 id="crosswalk-title">Proposal coverage results</h2>
           <p>Every active requirement is assessed automatically. Start with partial, missing, and conflicting responses; open an item only to investigate or correct it.</p>
         </div>
-        <button className="button button--primary" type="button" disabled={isGenerating || proposalDocuments.length === 0} onClick={() => void generate()}>
-          {isGenerating ? 'Analyzing proposal…' : findings.length ? 'Reanalyze proposal' : 'Analyze proposal'}
+        <button className="button button--primary" type="button" disabled={isGenerating || isAnalysisBusy || usableProposalDocuments.length === 0} onClick={() => void generate()}>
+          {isGenerating || isAnalysisBusy ? 'Analyzing proposal…' : findings.length ? 'Reanalyze proposal' : 'Analyze proposal'}
         </button>
       </header>
 
-      {proposalDocuments.length === 0 && (
+      {usableProposalDocuments.length === 0 && (
         <div className="crosswalk-blocker" role="status">
-          <strong>Proposal response required</strong>
-          <span>Upload at least one synthetic proposal volume to run the automated coverage assessment.</span>
+          <strong>{proposalDocuments.length === 0 ? 'Proposal response required' : 'Searchable proposal text required'}</strong>
+          <span>{proposalDocuments.length === 0
+            ? 'Upload at least one synthetic proposal volume to run the automated coverage assessment.'
+            : 'No uploaded proposal contains searchable text. Upload a searchable PDF or DOCX, or run OCR on scanned files, before analysis.'}</span>
         </div>
       )}
       {error && <p className="product-error crosswalk-message" role="alert">{error}</p>}
@@ -231,7 +254,7 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
             <CrosswalkFindingEditor
               finding={selected}
               projectId={projectId}
-              proposalDocuments={proposalDocuments}
+              proposalDocuments={usableProposalDocuments}
               position={selectedIndex + 1}
               total={visible.length}
               isSaving={isSaving}

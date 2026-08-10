@@ -5,8 +5,9 @@ import hashlib
 import io
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -15,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy import func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from .database import get_session
@@ -161,6 +162,34 @@ class _ProposalChunk:
     end: int
     excerpt: str
     tokens: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProposalCorpus:
+    chunks: tuple[_ProposalChunk, ...]
+    token_index: dict[str, tuple[int, ...]]
+
+
+_CROSSWALK_GENERATION_LOCK = Lock()
+_ACTIVE_CROSSWALK_GENERATIONS: set[str] = set()
+_CROSSWALK_BUSY_DETAIL = (
+    "Proposal analysis is already running for this project. Wait for it to finish before retrying."
+)
+
+
+def _crosswalk_generation_slot(project_id: str) -> Iterator[None]:
+    with _CROSSWALK_GENERATION_LOCK:
+        if project_id in _ACTIVE_CROSSWALK_GENERATIONS:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_CROSSWALK_BUSY_DETAIL,
+            )
+        _ACTIVE_CROSSWALK_GENERATIONS.add(project_id)
+    try:
+        yield
+    finally:
+        with _CROSSWALK_GENERATION_LOCK:
+            _ACTIVE_CROSSWALK_GENERATIONS.discard(project_id)
 
 
 def _project(session: Session, project_id: str) -> Project:
@@ -760,20 +789,48 @@ def _proposal_chunks(documents: list[Document]) -> list[_ProposalChunk]:
     ]
 
 
+def _is_usable_proposal_document(document: Document) -> bool:
+    return document.status == DocumentStatus.EXTRACTED and bool(document.extracted_text.strip())
+
+
+def _proposal_corpus(documents: list[Document]) -> _ProposalCorpus:
+    chunks = tuple(_proposal_chunks(documents))
+    token_postings: dict[str, list[int]] = {}
+    for chunk_index, chunk in enumerate(chunks):
+        for token in chunk.tokens:
+            token_postings.setdefault(token, []).append(chunk_index)
+    return _ProposalCorpus(
+        chunks=chunks,
+        token_index={token: tuple(indices) for token, indices in token_postings.items()},
+    )
+
+
+def _candidate_chunk_indices(
+    requirement_tokens: set[str], proposal_corpus: _ProposalCorpus
+) -> list[int]:
+    return sorted(
+        {
+            chunk_index
+            for token in requirement_tokens
+            for chunk_index in proposal_corpus.token_index.get(token, ())
+        }
+    )
+
+
 def _match_requirement(
-    requirement: Requirement, proposal_chunks: list[_ProposalChunk]
+    requirement: Requirement, proposal_corpus: _ProposalCorpus
 ) -> tuple[CrosswalkStatus, float, Document | None, int, int, str]:
     requirement_tokens = _tokens(requirement.requirement_text)
     if not requirement_tokens:
         return CrosswalkStatus.MISSING, 0.0, None, 0, 0, ""
     best: tuple[float, Document | None, int, int, str] = (0.0, None, 0, 0, "")
-    for chunk in proposal_chunks:
-        if not chunk.tokens:
-            continue
-        overlap = requirement_tokens.intersection(chunk.tokens)
-        recall = len(overlap) / len(requirement_tokens)
-        union = requirement_tokens.union(chunk.tokens)
-        jaccard = len(overlap) / len(union)
+    requirement_token_count = len(requirement_tokens)
+    for chunk_index in _candidate_chunk_indices(requirement_tokens, proposal_corpus):
+        chunk = proposal_corpus.chunks[chunk_index]
+        overlap_count = sum(token in chunk.tokens for token in requirement_tokens)
+        recall = overlap_count / requirement_token_count
+        union_count = requirement_token_count + len(chunk.tokens) - overlap_count
+        jaccard = overlap_count / union_count
         score = round((0.75 * recall) + (0.25 * jaccard), 4)
         if score > best[0]:
             best = (score, chunk.document, chunk.start, chunk.end, chunk.excerpt)
@@ -852,7 +909,9 @@ def _proposal_input_signature(documents: Iterable[Document]) -> str:
 
 @router.post("/crosswalk/generate", response_model=CrosswalkGenerateSummary)
 def generate_crosswalk(
-    project_id: str, session: Session = Depends(get_session)
+    project_id: str,
+    session: Session = Depends(get_session),
+    _generation_slot: None = Depends(_crosswalk_generation_slot),
 ) -> CrosswalkGenerateSummary:
     _project(session, project_id)
     requirements = list(
@@ -883,10 +942,21 @@ def generate_crosswalk(
         )
     )
     proposal_documents = [
-        document
-        for document in all_proposal_documents
-        if document.status == DocumentStatus.EXTRACTED
+        document for document in all_proposal_documents if _is_usable_proposal_document(document)
     ]
+    if not proposal_documents:
+        detail = (
+            "Upload and classify at least one proposal volume before analyzing."
+            if not all_proposal_documents
+            else (
+                "None of the uploaded proposal volumes contains usable extracted text. "
+                "Re-upload a searchable PDF or DOCX and verify extraction before analyzing."
+            )
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=detail,
+        )
     deduplicated_documents: list[Document] = []
     seen_content: set[tuple[str, str]] = set()
     for document in proposal_documents:
@@ -894,7 +964,7 @@ def generate_crosswalk(
         if content_key not in seen_content:
             deduplicated_documents.append(document)
             seen_content.add(content_key)
-    proposal_chunks = _proposal_chunks(deduplicated_documents)
+    proposal_corpus = _proposal_corpus(deduplicated_documents)
 
     existing = {
         finding.requirement_id: finding
@@ -908,9 +978,18 @@ def generate_crosswalk(
     updated = 0
     marked_stale = 0
     generated_at = utc_now()
+    run_state = session.get(CrosswalkRunState, project_id)
+    if run_state is None:
+        run_state = CrosswalkRunState(
+            project_id=project_id,
+            requirement_signature="",
+            proposal_signature="",
+            generated_at=generated_at,
+        )
+        session.add(run_state)
     for requirement in requirements:
         candidate_status, score, document, start, end, excerpt = _match_requirement(
-            requirement, proposal_chunks
+            requirement, proposal_corpus
         )
         signature = _candidate_signature(
             requirement,
@@ -933,7 +1012,6 @@ def generate_crosswalk(
                 generated_at=generated_at,
             )
             session.add(finding)
-            session.flush()
             created += 1
         else:
             changed = finding.candidate_signature != signature
@@ -962,46 +1040,46 @@ def generate_crosswalk(
             updated += 1
 
         if document is not None and excerpt:
-            session.add(
-                ProposalEvidence(
-                    project_id=project_id,
-                    finding_id=finding.id,
-                    document_id=document.id,
-                    source_start=start,
-                    source_end=end,
-                    source_locator=f"characters {start}-{end}",
-                    excerpt=excerpt,
-                    score=score,
-                    is_manual=False,
-                )
+            evidence = ProposalEvidence(
+                project_id=project_id,
+                document_id=document.id,
+                source_start=start,
+                source_end=end,
+                source_locator=f"characters {start}-{end}",
+                excerpt=excerpt,
+                score=score,
+                is_manual=False,
             )
-    run_state = session.get(CrosswalkRunState, project_id)
-    if run_state is None:
-        run_state = CrosswalkRunState(
-            project_id=project_id,
-            requirement_signature="",
-            proposal_signature="",
-            generated_at=generated_at,
-        )
-        session.add(run_state)
+            evidence.finding = finding
+            session.add(evidence)
     run_state.requirement_signature = _requirement_input_signature(requirements)
     run_state.proposal_signature = _proposal_input_signature(all_proposal_documents)
     run_state.generated_at = generated_at
     try:
         session.commit()
+    except OperationalError as exc:
+        session.rollback()
+        if (
+            session.get_bind().dialect.name == "sqlite"
+            and "database is locked" in str(exc.orig).lower()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_CROSSWALK_BUSY_DETAIL,
+            ) from None
+        raise
     except IntegrityError:
         session.rollback()
         # A simultaneous generation request may have completed the same unique
         # requirement findings first. Treat that completed register as success.
-        completed = session.scalar(
-            select(func.count(CrosswalkFinding.id)).where(
-                CrosswalkFinding.project_id == project_id,
-                CrosswalkFinding.requirement_id.in_([item.id for item in requirements])
-                if requirements
-                else CrosswalkFinding.id == "",
+        completed_requirement_ids = set(
+            session.scalars(
+                select(CrosswalkFinding.requirement_id).where(
+                    CrosswalkFinding.project_id == project_id
+                )
             )
         )
-        if completed != len(requirements):
+        if any(item.id not in completed_requirement_ids for item in requirements):
             raise
         return CrosswalkGenerateSummary(
             requirements_analyzed=len(requirements),
@@ -1449,6 +1527,7 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
         requirement_blockers.append("Extract requirement candidates from the solicitation.")
     unusable_proposal_documents = sum(
         document.status not in {DocumentStatus.EXTRACTED, DocumentStatus.ARCHIVE_EXPANDED}
+        or (document.status == DocumentStatus.EXTRACTED and not document.extracted_text.strip())
         for document in proposal_document_records
     )
     crosswalk_blockers: list[str] = []

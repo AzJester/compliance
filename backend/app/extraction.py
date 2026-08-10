@@ -123,7 +123,18 @@ def extract_document(relative_path: str, data: bytes) -> ExtractionResult:
         ".pptx": _extract_pptx,
     }
     try:
-        return extractors[extension](data)
+        result = extractors[extension](data)
+        if result.status == DocumentStatus.EXTRACTED and not result.text.strip():
+            return ExtractionResult(
+                text="",
+                status=DocumentStatus.ERROR,
+                error=(
+                    "The document was preserved, but no searchable text could be extracted. "
+                    "Export it as a searchable PDF or text-based Office document, then upload "
+                    "it again."
+                ),
+            )
+        return result
     except Exception:
         return ExtractionResult(
             text="",

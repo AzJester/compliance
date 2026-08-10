@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import io
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from sqlalchemy import select
 
+from backend.app import workflow_api
 from backend.app.config import Settings
 from backend.app.database import create_database, initialize_database
 from backend.app.main import create_app
@@ -57,6 +62,33 @@ def _extract(client: TestClient, project_id: str) -> dict[str, object]:
     response = client.post(f"/api/projects/{project_id}/requirements/extract")
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _pending_crosswalk_project(client: TestClient, *, name: str, requirement_text: str) -> str:
+    project_id = str(_create_project(client, name)["id"])
+    solicitation_id = seed_extracted_document(
+        client,
+        project_id,
+        f"SECTION C\n{requirement_text}",
+        name=f"{name}-solicitation.pdf",
+    )
+    proposal_id = seed_extracted_document(
+        client,
+        project_id,
+        requirement_text,
+        name=f"{name}-proposal.pdf",
+    )
+    _classify(client, project_id, solicitation_id, "BASE_SOLICITATION")
+    _classify(
+        client,
+        project_id,
+        proposal_id,
+        "PROPOSAL_VOLUME",
+        volume_name="Technical",
+    )
+    summary = _extract(client, project_id)
+    assert summary["total_requirements"] == 1
+    return project_id
 
 
 def _cdrl_text(*, complete: bool) -> str:
@@ -420,6 +452,164 @@ def test_proposal_documents_are_excluded_from_requirement_extraction_and_crosswa
     assert client.get(f"/api/projects/{project_id}/readiness").json()["crosswalk_verified"] == 1
 
 
+def test_crosswalk_generation_is_project_scoped_and_rejects_duplicate_work(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_project_id = _pending_crosswalk_project(
+        client,
+        name="Concurrent First",
+        requirement_text="The contractor shall deliver the alpha management plan.",
+    )
+    other_project_id = _pending_crosswalk_project(
+        client,
+        name="Concurrent Other",
+        requirement_text="The contractor shall deliver the bravo staffing plan.",
+    )
+    started = Event()
+    release = Event()
+    original_proposal_corpus = workflow_api._proposal_corpus
+
+    def blocking_proposal_corpus(
+        documents: list[workflow_api.Document],
+    ) -> workflow_api._ProposalCorpus:
+        if documents and documents[0].project_id == first_project_id:
+            started.set()
+            assert release.wait(timeout=10)
+        return original_proposal_corpus(documents)
+
+    monkeypatch.setattr(workflow_api, "_proposal_corpus", blocking_proposal_corpus)
+    first_url = f"/api/projects/{first_project_id}/crosswalk/generate"
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first_request = executor.submit(client.post, first_url)
+        assert started.wait(timeout=10)
+        try:
+            duplicate = client.post(first_url)
+            other_project = client.post(f"/api/projects/{other_project_id}/crosswalk/generate")
+        finally:
+            release.set()
+        first = first_request.result(timeout=10)
+
+    assert duplicate.status_code == 409
+    assert "already running" in duplicate.json()["detail"]
+    assert other_project.status_code == 200, other_project.text
+    assert first.status_code == 200, first.text
+    assert len(client.get(f"/api/projects/{first_project_id}/crosswalk").json()) == 1
+
+
+def test_crosswalk_generation_guard_is_released_after_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _pending_crosswalk_project(
+        client,
+        name="Retry After Failure",
+        requirement_text="The contractor shall deliver the quality plan.",
+    )
+    original_proposal_corpus = workflow_api._proposal_corpus
+    failed = False
+
+    def fail_once(
+        documents: list[workflow_api.Document],
+    ) -> workflow_api._ProposalCorpus:
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise RuntimeError("injected proposal analysis failure")
+        return original_proposal_corpus(documents)
+
+    monkeypatch.setattr(workflow_api, "_proposal_corpus", fail_once)
+    url = f"/api/projects/{project_id}/crosswalk/generate"
+
+    with pytest.raises(RuntimeError, match="injected proposal analysis failure"):
+        client.post(url)
+
+    retry = client.post(url)
+    assert retry.status_code == 200, retry.text
+
+
+def test_sqlite_lock_during_crosswalk_commit_returns_retryable_conflict(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _pending_crosswalk_project(
+        client,
+        name="SQLite Lock",
+        requirement_text="The contractor shall deliver the security plan.",
+    )
+    original_commit = workflow_api.Session.commit
+    lock_injected = False
+
+    def locked_once(session: workflow_api.Session) -> None:
+        nonlocal lock_injected
+        generating_findings = any(
+            isinstance(item, workflow_api.CrosswalkFinding) for item in session.new
+        )
+        if generating_findings and not lock_injected:
+            lock_injected = True
+            raise workflow_api.OperationalError(
+                "INSERT INTO crosswalk_findings",
+                {},
+                sqlite3.OperationalError("database is locked"),
+            )
+        original_commit(session)
+
+    monkeypatch.setattr(workflow_api.Session, "commit", locked_once)
+    url = f"/api/projects/{project_id}/crosswalk/generate"
+
+    locked = client.post(url)
+    retry = client.post(url)
+
+    assert locked.status_code == 409
+    assert "already running" in locked.json()["detail"]
+    assert retry.status_code == 200, retry.text
+
+
+def test_crosswalk_generation_flushes_scale_batch_once(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = str(_create_project(client, "Batched Crosswalk")["id"])
+    requirement_lines = [
+        f"The contractor shall deliver synthetic report number {index} every month."
+        for index in range(40)
+    ]
+    solicitation_id = seed_extracted_document(
+        client,
+        project_id,
+        "SECTION C\n" + "\n".join(requirement_lines),
+        name="batched-solicitation.pdf",
+    )
+    proposal_id = seed_extracted_document(
+        client,
+        project_id,
+        "\n".join(requirement_lines),
+        name="batched-proposal.pdf",
+    )
+    _classify(client, project_id, solicitation_id, "BASE_SOLICITATION")
+    _classify(
+        client,
+        project_id,
+        proposal_id,
+        "PROPOSAL_VOLUME",
+        volume_name="Technical",
+    )
+    assert _extract(client, project_id)["total_requirements"] == 40
+    original_flush = workflow_api.Session.flush
+    write_flushes = 0
+
+    def counting_flush(session: workflow_api.Session, objects: object | None = None) -> None:
+        nonlocal write_flushes
+        if session.new or session.dirty or session.deleted:
+            write_flushes += 1
+        original_flush(session, objects)
+
+    monkeypatch.setattr(workflow_api.Session, "flush", counting_flush)
+
+    generated = client.post(f"/api/projects/{project_id}/crosswalk/generate")
+
+    assert generated.status_code == 200, generated.text
+    assert generated.json()["findings_created"] == 40
+    assert write_flushes == 1
+    assert len(client.get(f"/api/projects/{project_id}/crosswalk").json()) == 40
+
+
 def test_proposal_upload_classification_is_atomic(client: TestClient) -> None:
     project = _create_project(client)
     project_id = str(project["id"])
@@ -444,7 +634,6 @@ def test_proposal_upload_classification_is_atomic(client: TestClient) -> None:
     assert uploaded["volume_name"] == "Volume I - Technical"
     assert uploaded["classification_notes"] == "Synthetic response only."
     assert _extract(client, project_id)["documents_analyzed"] == 0
-
     missing_volume_name = client.post(
         f"/api/projects/{project_id}/documents",
         data={"classification": "PROPOSAL_VOLUME"},
@@ -457,6 +646,81 @@ def test_proposal_upload_classification_is_atomic(client: TestClient) -> None:
         },
     )
     assert missing_volume_name.status_code == 422
+
+
+def test_blank_extracted_proposal_is_rejected_and_ignored_when_valid_volume_exists(
+    client: TestClient,
+) -> None:
+    project_id = str(_create_project(client, "Blank Proposal Text")["id"])
+    requirement_text = "The contractor shall deliver the synthetic quality plan."
+    solicitation_id = seed_extracted_document(
+        client,
+        project_id,
+        f"SECTION C\n{requirement_text}",
+        name="blank-proposal-solicitation.pdf",
+    )
+    blank_proposal_id = seed_extracted_document(
+        client,
+        project_id,
+        "",
+        name="blank-proposal.docx",
+        content_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    )
+    _classify(client, project_id, solicitation_id, "BASE_SOLICITATION")
+    _classify(
+        client,
+        project_id,
+        blank_proposal_id,
+        "PROPOSAL_VOLUME",
+        volume_name="Blank legacy volume",
+    )
+    assert _extract(client, project_id)["total_requirements"] == 1
+
+    readiness = client.get(f"/api/projects/{project_id}/readiness").json()
+    rejected = client.post(f"/api/projects/{project_id}/crosswalk/generate")
+
+    assert any(
+        "proposal document extraction issue" in reason for reason in readiness["blocking_reasons"]
+    )
+    assert rejected.status_code == 422
+    assert "usable extracted text" in rejected.json()["detail"]
+
+    valid_proposal_id = seed_extracted_document(
+        client,
+        project_id,
+        requirement_text,
+        name="searchable-proposal.pdf",
+    )
+    _classify(
+        client,
+        project_id,
+        valid_proposal_id,
+        "PROPOSAL_VOLUME",
+        volume_name="Searchable technical volume",
+    )
+    generated = client.post(f"/api/projects/{project_id}/crosswalk/generate")
+    finding = client.get(f"/api/projects/{project_id}/crosswalk").json()[0]
+
+    assert generated.status_code == 200, generated.text
+    assert generated.json()["proposal_documents_analyzed"] == 1
+    assert finding["evidence"][0]["document_id"] == valid_proposal_id
+
+
+def test_crosswalk_generation_requires_a_proposal_volume(client: TestClient) -> None:
+    project_id = str(_create_project(client, "No Proposal Volume")["id"])
+    solicitation_id = seed_extracted_document(
+        client,
+        project_id,
+        "SECTION C\nThe contractor shall deliver the management plan.",
+        name="no-proposal-solicitation.pdf",
+    )
+    _classify(client, project_id, solicitation_id, "BASE_SOLICITATION")
+    assert _extract(client, project_id)["total_requirements"] == 1
+
+    response = client.post(f"/api/projects/{project_id}/crosswalk/generate")
+
+    assert response.status_code == 422
+    assert "Upload and classify" in response.json()["detail"]
 
 
 def test_confirmation_only_rerun_adopts_fresh_automated_result(client: TestClient) -> None:

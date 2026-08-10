@@ -4,11 +4,27 @@ import type { ProjectDocument } from '../types'
 import { formatBytes } from './DocumentUpload'
 import './product-workflow.css'
 
+const searchableProposalGuidance = 'No searchable text was extracted from the uploaded proposal. Upload a searchable PDF or DOCX, or run OCR on scanned files, then try again.'
+
+function isUsableProposalDocument(document: ProjectDocument) {
+  return document.status === 'EXTRACTED' && (document.extraction_count ?? 0) > 0
+}
+
+function proposalDocumentIssue(document: ProjectDocument) {
+  if (document.error) return document.error
+  if (document.status === 'EXTRACTED' && (document.extraction_count ?? 0) <= 0) {
+    return 'No searchable text was extracted. Upload a searchable document or run OCR before analysis.'
+  }
+  return null
+}
+
 interface ProposalWorkspaceProps {
   projectId: string
   documents: ProjectDocument[]
   isAnonymous: boolean
+  isAnalysisBusy: boolean
   onDocumentsChanged: () => void
+  onAnalysisBusyChange: (isBusy: boolean) => void
   onAnalysisComplete?: () => void
 }
 
@@ -16,7 +32,9 @@ export function ProposalWorkspace({
   projectId,
   documents,
   isAnonymous,
+  isAnalysisBusy,
   onDocumentsChanged,
+  onAnalysisBusyChange,
   onAnalysisComplete,
 }: ProposalWorkspaceProps) {
   const [files, setFiles] = useState<File[]>([])
@@ -40,6 +58,7 @@ export function ProposalWorkspace({
   const upload = async () => {
     if (!files.length || (isAnonymous && !acknowledged)) return
     setIsUploading(true)
+    onAnalysisBusyChange(true)
     setError(null)
     setMessage(null)
     let uploaded: ProjectDocument[]
@@ -51,6 +70,7 @@ export function ProposalWorkspace({
       })
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload the proposal files.')
+      onAnalysisBusyChange(false)
       setIsUploading(false)
       return
     }
@@ -59,13 +79,28 @@ export function ProposalWorkspace({
     setVolumeName('')
     setAcknowledged(false)
     onDocumentsChanged()
+    const usableUploaded = uploaded.filter(isUsableProposalDocument)
+    const hasUsableProposal = [...proposalDocuments, ...uploaded].some(isUsableProposalDocument)
+    if (!hasUsableProposal) {
+      setError(searchableProposalGuidance)
+      onAnalysisComplete?.()
+      onAnalysisBusyChange(false)
+      setIsUploading(false)
+      return
+    }
     try {
       const summary = await api.generateCrosswalk(projectId)
       setMessage(`${uploaded.length} proposal ${uploaded.length === 1 ? 'file was' : 'files were'} uploaded and ${summary.requirements_analyzed.toLocaleString()} requirements were analyzed.`)
+      const excludedCount = uploaded.length - usableUploaded.length
+      if (excludedCount > 0) {
+        setError(`${excludedCount} uploaded ${excludedCount === 1 ? 'file contained' : 'files contained'} no searchable text and ${excludedCount === 1 ? 'was' : 'were'} excluded from analysis. Upload searchable documents or run OCR before relying on those volumes.`)
+      }
       onAnalysisComplete?.()
     } catch (analysisError) {
-      setError(`The proposal was uploaded, but the automated assessment failed: ${analysisError instanceof Error ? analysisError.message : 'unknown error'}. Use Reanalyze proposal below to retry.`)
+      setError(`The proposal was uploaded, but the automated assessment request failed: ${analysisError instanceof Error ? analysisError.message : 'unknown error'}. Existing results were refreshed below; use Reanalyze proposal only if no current findings appear.`)
+      onAnalysisComplete?.()
     } finally {
+      onAnalysisBusyChange(false)
       setIsUploading(false)
     }
   }
@@ -132,10 +167,14 @@ export function ProposalWorkspace({
           <button
             className="button button--primary product-primary-action"
             type="button"
-            disabled={!files.length || isUploading || (isAnonymous && !acknowledged)}
+            disabled={!files.length || isUploading || isAnalysisBusy || (isAnonymous && !acknowledged)}
             onClick={() => void upload()}
           >
-            {isUploading ? 'Uploading and analyzing…' : 'Upload and analyze proposal'}
+            {isUploading
+              ? 'Uploading and analyzing…'
+              : isAnalysisBusy
+                ? 'Proposal analysis in progress…'
+                : 'Upload and analyze proposal'}
           </button>
         </div>
 
@@ -148,18 +187,25 @@ export function ProposalWorkspace({
             </div>
           ) : (
             <ul>
-              {proposalDocuments.map((document) => (
-                <li key={document.id}>
-                  <div>
-                    <strong>{document.volume_name || document.name}</strong>
-                    <span>{document.name}</span>
-                  </div>
-                  <div>
-                    <span>{formatBytes(document.size_bytes)}</span>
-                    <span className={`document-state document-state--${document.status.toLowerCase()}`}>{document.status.replaceAll('_', ' ')}</span>
-                  </div>
-                </li>
-              ))}
+              {proposalDocuments.map((document) => {
+                const issue = proposalDocumentIssue(document)
+                const hasNoText = document.status === 'EXTRACTED' && (document.extraction_count ?? 0) <= 0
+                const state = issue ? 'error' : document.status.toLowerCase()
+                const stateLabel = hasNoText ? 'NO SEARCHABLE TEXT' : document.error ? 'ERROR' : document.status.replaceAll('_', ' ')
+                return (
+                  <li key={document.id}>
+                    <div>
+                      <strong>{document.volume_name || document.name}</strong>
+                      <span>{document.name}</span>
+                      {issue && <span className="row-error" role="alert">{issue}</span>}
+                    </div>
+                    <div>
+                      <span>{formatBytes(document.size_bytes)}</span>
+                      <span className={`document-state document-state--${state}`}>{stateLabel}</span>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
