@@ -20,6 +20,7 @@ from .models import (
     ProjectWorkflow,
     SolicitationProfile,
 )
+from .reports_api import router as reports_router
 from .requirements_api import router as requirements_router
 from .schemas import DocumentResponse, HealthResponse, ProjectCreate, ProjectResponse
 from .security import LocalRequestMiddleware
@@ -145,6 +146,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     application.include_router(requirements_router)
+    # Static report export paths must be registered before workflow's
+    # /exports/{register_name} catch-all route.
+    application.include_router(reports_router)
     application.include_router(workflow_router)
     application.include_router(solicitation_details_router)
 

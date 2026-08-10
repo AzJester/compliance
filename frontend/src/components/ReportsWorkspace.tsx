@@ -12,6 +12,7 @@ import './product-workflow.css'
 
 interface ReportsWorkspaceProps {
   projectId: string
+  isAnonymous?: boolean
 }
 
 const actionStatuses: ActionStatus[] = ['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE']
@@ -28,7 +29,24 @@ function formatCoveragePercent(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
-export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
+function formatCount(value: number | undefined) {
+  return (value ?? 0).toLocaleString()
+}
+
+type ReportKind = 'compliance' | 'gaps'
+
+function saveDownloadedFile(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.append(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
+export function ReportsWorkspace({ projectId, isAnonymous = false }: ReportsWorkspaceProps) {
   const [readiness, setReadiness] = useState<ReadinessSummary | null>(null)
   const [actions, setActions] = useState<ProjectAction[]>([])
   const [requirements, setRequirements] = useState<Requirement[]>([])
@@ -37,6 +55,9 @@ export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
   const [error, setError] = useState<string | null>(null)
   const [showActionForm, setShowActionForm] = useState(false)
   const [showCompletedActions, setShowCompletedActions] = useState(false)
+  const [downloadingReport, setDownloadingReport] = useState<ReportKind | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null)
 
   const load = async () => {
     setIsLoading(true)
@@ -63,6 +84,23 @@ export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
 
   const openActions = useMemo(() => actions.filter((action) => action.status !== 'DONE'), [actions])
   const completedActions = actions.length - openActions.length
+  const gapStatusCounts = useMemo(() => findings.reduce(
+    (counts, finding) => {
+      if (finding.status === 'PARTIAL') counts.partial += 1
+      if (finding.status === 'MISSING') counts.missing += 1
+      if (finding.status === 'CONFLICT') counts.conflict += 1
+      return counts
+    },
+    { partial: 0, missing: 0, conflict: 0 },
+  ), [findings])
+  const gapCount = gapStatusCounts.partial + gapStatusCounts.missing + gapStatusCounts.conflict
+  const hasSavedAssessment = findings.length > 0
+  const hasCompleteAssessment = Boolean(
+    readiness
+    && readiness.requirements_total > 0
+    && readiness.crosswalk_total === readiness.requirements_total,
+  )
+  const hasStaleFindings = findings.some((finding) => finding.stale)
   const visibleActions = showCompletedActions ? actions : openActions
   const requirementsById = useMemo(
     () => new Map(requirements.map((requirement) => [requirement.id, requirement])),
@@ -88,6 +126,31 @@ export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
       void load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to update the action status.')
+    }
+  }
+
+  const downloadReport = async (kind: ReportKind) => {
+    if (
+      !hasSavedAssessment
+      || downloadingReport
+      || isLoading
+      || (kind === 'gaps' && (!hasCompleteAssessment || hasStaleFindings))
+    ) return
+    setDownloadingReport(kind)
+    setDownloadError(null)
+    setDownloadMessage(null)
+    try {
+      const file = kind === 'compliance'
+        ? await api.downloadComplianceReport(projectId)
+        : await api.downloadGapReport(projectId)
+      saveDownloadedFile(file.blob, file.filename)
+      setDownloadMessage(kind === 'compliance'
+        ? 'Compliance assessment report downloaded.'
+        : 'Requirements gap report downloaded.')
+    } catch (reason) {
+      setDownloadError(reason instanceof Error ? reason.message : 'Unable to create the report.')
+    } finally {
+      setDownloadingReport(null)
     }
   }
 
@@ -147,12 +210,127 @@ export function ReportsWorkspace({ projectId }: ReportsWorkspaceProps) {
         </div>
       </section>
 
-      <section className="product-panel" aria-labelledby="exports-title">
-        <header className="product-panel__header compact-product-header"><div><span className="product-eyebrow">Current outputs</span><h2 id="exports-title">Download compliance records</h2><p>Export current registers for proposal reviews, working sessions, and archival.</p></div></header>
-        <div className="export-grid">
-          <a className="export-card export-card--primary" href={api.workbookUrl(projectId)}><strong>Compliance workbook</strong><span>One XLSX with Requirements, Section L, Section M, CDRLs, Crosswalk, and Readiness sheets.</span><b>Download XLSX →</b></a>
-          {['requirements', 'section-l', 'section-m', 'cdrls', 'crosswalk', 'readiness'].map((register) => <div className="export-card" key={register}><strong>{title(register)}</strong><span>Machine-readable and spreadsheet-friendly current register.</span><div><a href={api.exportUrl(projectId, register, 'csv')}>CSV</a><a href={api.exportUrl(projectId, register, 'json')}>JSON</a></div></div>)}
+      <section className="product-panel" aria-labelledby="reports-title">
+        <header className="product-panel__header compact-product-header">
+          <div>
+            <span className="product-eyebrow">Shareable deliverables</span>
+            <h2 id="reports-title">Create reports</h2>
+            <p>Create a current compliance assessment for decision-makers or a focused gap list for the proposal team.</p>
+          </div>
+        </header>
+
+        {isAnonymous && (
+          <aside className="report-boundary" aria-label="Public demo report warning">
+            <strong>Synthetic PUBLIC data only.</strong>
+            <span>Reports downloaded from this anonymous site must not contain proprietary, customer, CUI, ITAR-controlled, or classified content.</span>
+          </aside>
+        )}
+
+        {!isLoading && readiness && !hasSavedAssessment && (
+          <div className="report-assessment-notice" id="report-availability-note" role="status">
+            <strong>Analyze the proposal before creating reports.</strong>
+            <span>No requirements have been assessed yet, so zero gaps does not mean the proposal is compliant.</span>
+          </div>
+        )}
+        {hasSavedAssessment && hasStaleFindings && (
+          <div className="report-assessment-notice report-assessment-notice--warning" id="report-availability-note" role="status">
+            <strong>The saved assessment is out of date.</strong>
+            <span>Reanalyze before sharing. The DOCX will flag the saved state; the gap CSV requires a fresh assessment.</span>
+          </div>
+        )}
+        {hasSavedAssessment && !hasStaleFindings && !hasCompleteAssessment && (
+          <div className="report-assessment-notice report-assessment-notice--warning" id="report-availability-note" role="status">
+            <strong>The saved assessment is incomplete or contains invalid results.</strong>
+            <span>Reanalyze before exporting the gap CSV. The DOCX will document the currently saved state.</span>
+          </div>
+        )}
+        {downloadError && <p className="product-error report-download-message" role="alert">Report creation failed: {downloadError}</p>}
+        {downloadMessage && <p className="product-success report-download-message" role="status">{downloadMessage}</p>}
+
+        <div className="report-grid">
+          <article className="report-card report-card--primary">
+            <header>
+              <div>
+                <span className="report-card__format">DOCX</span>
+                <h3>Compliance assessment report</h3>
+              </div>
+              <span className="report-card__audience">Leadership and review teams</span>
+            </header>
+            <p>A formatted, human-readable report with the project summary, coverage results, priority gaps, requirement-level findings and evidence, and the action register.</p>
+            {hasSavedAssessment ? (
+              <div className="report-card__snapshot" aria-label="Current compliance report snapshot">
+                <span><strong>{formatCount(readiness?.crosswalk_total)}</strong> assessed</span>
+                <span><strong>{formatCount(readiness?.covered)}</strong> covered</span>
+                <span><strong>{formatCount(gapCount)}</strong> gaps</span>
+              </div>
+            ) : (
+              <div className="report-card__snapshot report-card__snapshot--empty">Proposal analysis required</div>
+            )}
+            <button
+              className="button button--primary report-download"
+              type="button"
+              disabled={isLoading || !hasSavedAssessment || downloadingReport !== null}
+              aria-describedby={!isLoading && readiness && (!hasSavedAssessment || hasStaleFindings || !hasCompleteAssessment) ? 'report-availability-note' : undefined}
+              onClick={() => void downloadReport('compliance')}
+            >
+              {downloadingReport === 'compliance' ? 'Creating DOCX...' : 'Create and download DOCX'}
+            </button>
+            <small>Built from the latest saved project and proposal assessment when you download it.</small>
+          </article>
+
+          <article className="report-card report-card--gaps">
+            <header>
+              <div>
+                <span className="report-card__format">CSV</span>
+                <h3>Requirements gap report</h3>
+              </div>
+              <span className="report-card__audience">Proposal owners and writers</span>
+            </header>
+            <p>A focused working report of partial, missing, and conflicting requirements with scores, solicitation sources, proposal evidence, notes, owners, and due dates.</p>
+            {hasSavedAssessment ? (
+              <div className="report-card__snapshot" aria-label="Current gap report snapshot">
+                <span><strong>{formatCount(gapStatusCounts.partial)}</strong> partial</span>
+                <span><strong>{formatCount(gapStatusCounts.missing)}</strong> missing</span>
+                <span><strong>{formatCount(gapStatusCounts.conflict)}</strong> conflicts</span>
+              </div>
+            ) : (
+              <div className="report-card__snapshot report-card__snapshot--empty">Proposal analysis required</div>
+            )}
+            <button
+              className="button button--secondary report-download"
+              type="button"
+              disabled={isLoading || !hasCompleteAssessment || hasStaleFindings || downloadingReport !== null}
+              aria-describedby={!isLoading && readiness && (!hasSavedAssessment || hasStaleFindings || !hasCompleteAssessment) ? 'report-availability-note' : undefined}
+              onClick={() => void downloadReport('gaps')}
+            >
+              {downloadingReport === 'gaps' ? 'Creating CSV...' : 'Create and download CSV'}
+            </button>
+            <small>Includes only findings that need attention; covered and not-applicable items are excluded.</small>
+          </article>
         </div>
+
+        <details className="raw-exports">
+          <summary>
+            <span><strong>Raw data exports</strong><small>Workbook, CSV, and JSON records for deeper analysis or archival.</small></span>
+          </summary>
+          <div className="export-grid">
+            <a className="export-card export-card--primary" href={api.workbookUrl(projectId)} download>
+              <strong>Compliance workbook</strong>
+              <span>One XLSX with Requirements, Section L, Section M, CDRLs, Crosswalk, and Readiness sheets.</span>
+              <b>Download XLSX</b>
+            </a>
+            {['requirements', 'section-l', 'section-m', 'cdrls', 'crosswalk', 'readiness'].map((register) => (
+              <div className="export-card" key={register}>
+                <strong>{title(register)}</strong>
+                <span>Machine-readable and spreadsheet-friendly current register.</span>
+                <div>
+                  <a href={api.exportUrl(projectId, register, 'csv')} download aria-label={`Download ${title(register)} as CSV`}>CSV</a>
+                  <a href={api.exportUrl(projectId, register, 'json')} download aria-label={`Download ${title(register)} as JSON`}>JSON</a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
       </section>
     </div>
   )
