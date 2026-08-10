@@ -484,6 +484,8 @@ export interface CrosswalkFinding {
   due_at?: string | null
   notes?: string | null
   stale: boolean
+  needs_attention?: boolean
+  attention_reasons?: string[]
   reviewed_at?: string | null
   generated_at: string
   updated_at: string

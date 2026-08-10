@@ -56,17 +56,13 @@ const workflow: ProjectWorkflow = {
   updated_at: '2026-08-08T00:00:00Z',
 }
 
-const stageLabels: Record<WorkflowStage, string> = {
-  PROJECT_SETUP: 'Project setup',
+const stageLabels: Partial<Record<WorkflowStage, string>> = {
   SOLICITATION_FILES: 'Solicitation files',
-  VERIFY_PACKAGE: 'Verify package',
   REQUIREMENTS: 'Requirements',
-  PROPOSAL_RESPONSE: 'Proposal response',
   CROSSWALK: 'Crosswalk',
-  REPORTS: 'Reports',
 }
 
-const stageOrder = Object.keys(stageLabels) as WorkflowStage[]
+const stageOrder: WorkflowStage[] = ['SOLICITATION_FILES', 'REQUIREMENTS', 'CROSSWALK']
 
 function readinessWith(
   updates: Partial<ReadinessSummary> = {},
@@ -107,7 +103,7 @@ function readinessWith(
     next_action: null,
     stages: stageOrder.map((stage) => ({
       stage,
-      label: stageLabels[stage],
+      label: stageLabels[stage] ?? stage,
       status: 'COMPLETE',
       completed_items: 1,
       total_items: 1,
@@ -135,7 +131,6 @@ function renderOverview(
       isAnonymous
       onUpload={vi.fn()}
       onRefresh={vi.fn()}
-      onProjectUpdated={vi.fn()}
     />,
   )
 }
@@ -146,21 +141,26 @@ afterEach(() => {
 })
 
 describe('product workflow components', () => {
-  it('uses backend blockers for setup and files instead of local completion heuristics', async () => {
+  it('shows only the three authoritative analysis steps', async () => {
     const authoritative = readinessWith({}, {
-      PROJECT_SETUP: {
-        status: 'BLOCKED',
-        completed_items: 3,
-        total_items: 4,
-        blocking_reasons: ['Project setup is incomplete.'],
-        next_action: 'Complete the missing project details.',
-      },
       SOLICITATION_FILES: {
         status: 'BLOCKED',
         completed_items: 1,
         total_items: 1,
         blocking_reasons: ['Run requirement extraction for 1 new or reclassified solicitation document.'],
         next_action: 'Upload and classify the solicitation package.',
+      },
+      REQUIREMENTS: {
+        status: 'BLOCKED',
+        completed_items: 0,
+        total_items: 1,
+        blocking_reasons: ['Extract requirement candidates from the solicitation.'],
+      },
+      CROSSWALK: {
+        status: 'BLOCKED',
+        completed_items: 0,
+        total_items: 1,
+        blocking_reasons: ['Upload and classify at least one proposal volume.'],
       },
     })
     const workflowUpdates: Array<Record<string, unknown>> = []
@@ -181,18 +181,19 @@ describe('product workflow components', () => {
 
     renderOverview([sourceDocument], fetchMock)
 
-    const setup = await screen.findByRole('button', { name: /Setup Blocked.*Project setup is incomplete/i })
-    const files = screen.getByRole('button', { name: /Files Blocked.*new or reclassified solicitation document/i })
-    expect(setup.closest('li')).toHaveClass('workflow-rail__attention')
-    expect(files.closest('li')).toHaveClass('workflow-rail__attention')
-    expect(screen.getByLabelText(/workflow stages complete/i)).toHaveTextContent('5/7')
+    const solicitation = await screen.findByRole('button', { name: /Solicitation Needs attention.*new or reclassified solicitation document/i })
+    expect(solicitation.closest('li')).toHaveClass('workflow-rail__attention')
+    expect(screen.getByRole('button', { name: /^Requirements Waiting/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Proposal compliance Waiting/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Setup /i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Verify /i })).not.toBeInTheDocument()
 
-    await user.click(setup)
-    await user.click(files)
+    await user.click(screen.getByRole('button', { name: /^Requirements /i }))
+    await user.click(solicitation)
     await waitFor(() => expect(workflowUpdates).toHaveLength(2))
     expect(workflowUpdates).toEqual([
       {
-        stage: 'PROJECT_SETUP',
+        stage: 'REQUIREMENTS',
         status: 'IN_PROGRESS',
         blocker_summary: null,
       },
@@ -248,11 +249,11 @@ describe('product workflow components', () => {
     renderOverview(documents, fetchMock)
 
     const crosswalk = await screen.findByRole('button', {
-      name: /Crosswalk Blocked.*Regenerate the proposal crosswalk.*Resolve 1 proposal coverage gap/i,
+      name: /Proposal compliance Needs attention.*Regenerate the proposal crosswalk.*Resolve 1 proposal coverage gap/i,
     })
     expect(crosswalk.closest('li')).toHaveClass('workflow-rail__attention')
     expect(crosswalk.closest('li')).not.toHaveClass('workflow-rail__complete')
-    expect(screen.getAllByText(/Regenerate the proposal crosswalk after requirement or proposal changes/i).length).toBeGreaterThanOrEqual(2)
+    expect(screen.getAllByText(/Regenerate the proposal crosswalk after requirement or proposal changes/i).length).toBeGreaterThanOrEqual(1)
 
     await user.click(crosswalk)
     await waitFor(() => expect(workflowUpdates).toHaveLength(1))
@@ -282,13 +283,13 @@ describe('product workflow components', () => {
 
     renderOverview([sourceDocument], fetchMock)
 
-    const setup = await screen.findByRole('button', { name: /Setup Status unavailable.*readiness could not be loaded/i })
-    const files = screen.getByRole('button', { name: /Files Status unavailable.*readiness could not be loaded/i })
-    expect(setup.closest('li')).not.toHaveClass('workflow-rail__complete')
-    expect(files.closest('li')).not.toHaveClass('workflow-rail__complete')
-    expect(screen.getByText(/^Current readiness could not be loaded\. Workflow stages remain conservatively incomplete/i)).toBeInTheDocument()
+    const solicitation = await screen.findByRole('button', { name: /Solicitation Status unavailable.*processing status could not be loaded/i })
+    const requirements = screen.getByRole('button', { name: /Requirements Status unavailable.*processing status could not be loaded/i })
+    expect(solicitation.closest('li')).not.toHaveClass('workflow-rail__complete')
+    expect(requirements.closest('li')).not.toHaveClass('workflow-rail__complete')
+    expect(screen.getAllByText(/^Current processing status could not be loaded/i).length).toBeGreaterThanOrEqual(1)
 
-    await user.click(files)
+    await user.click(solicitation)
     await waitFor(() => expect(workflowUpdates).toHaveLength(1))
     expect(workflowUpdates[0]).toMatchObject({
       stage: 'SOLICITATION_FILES',
@@ -335,7 +336,7 @@ describe('product workflow components', () => {
 
   it('uploads an anonymous proposal volume with atomic classification metadata', async () => {
     const onDocumentsChanged = vi.fn()
-    const onContinue = vi.fn()
+    const onAnalysisComplete = vi.fn()
     const proposalDocument: ProjectDocument = {
       ...documentRecord,
       id: 'proposal-1',
@@ -343,11 +344,21 @@ describe('product workflow components', () => {
       classification: 'PROPOSAL_VOLUME',
       volume_name: 'Technical Volume',
     }
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/crosswalk/generate')) {
+        expect(init?.method).toBe('POST')
+        return jsonResponse({
+          requirements_analyzed: 1250,
+          proposal_documents_analyzed: 1,
+          findings_created: 1250,
+          findings_updated: 0,
+          verified_findings_marked_stale: 0,
+        })
+      }
       const body = init?.body as FormData
       expect(body.get('classification')).toBe('PROPOSAL_VOLUME')
       expect(body.get('volume_name')).toBe('Technical Volume')
-      expect(body.get('classification_notes')).toMatch(/proposal-response workflow/i)
+      expect(body.get('classification_notes')).toMatch(/automated proposal coverage analysis/i)
       expect(body.getAll('files')).toHaveLength(1)
       return jsonResponse([proposalDocument], 201)
     })
@@ -360,7 +371,7 @@ describe('product workflow components', () => {
         documents={[]}
         isAnonymous
         onDocumentsChanged={onDocumentsChanged}
-        onContinue={onContinue}
+        onAnalysisComplete={onAnalysisComplete}
       />,
     )
 
@@ -369,14 +380,15 @@ describe('product workflow components', () => {
       screen.getByLabelText(/choose proposal documents/i),
       new File(['synthetic proposal'], 'synthetic-technical.pdf', { type: 'application/pdf' }),
     )
-    const upload = screen.getByRole('button', { name: /upload proposal response/i })
+    const upload = screen.getByRole('button', { name: /upload and analyze proposal/i })
     expect(upload).toBeDisabled()
     await user.click(screen.getByRole('checkbox', { name: /synthetic PUBLIC material/i }))
     await user.click(upload)
 
     await waitFor(() => expect(onDocumentsChanged).toHaveBeenCalledTimes(1))
-    expect(onContinue).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onAnalysisComplete).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status')).toHaveTextContent(/1,250 requirements were analyzed/i)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('records persisted package verification with a reviewer label', async () => {
@@ -457,6 +469,7 @@ describe('product workflow components', () => {
 
     render(<CrosswalkWorkspace projectId={project.id} proposalDocuments={[proposalDocument]} />)
     expect((await screen.findAllByText(finding.requirement_text)).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: new RegExp(finding.requirement_text, 'i') }))
     await user.click(screen.getByRole('button', { name: /add source passage/i }))
     const source = await screen.findByLabelText(/proposal source text/i)
     ;(source as HTMLTextAreaElement).setSelectionRange(0, 15)

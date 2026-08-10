@@ -16,16 +16,29 @@ interface CrosswalkWorkspaceProps {
 }
 
 const statuses: CrosswalkStatus[] = ['COVERED', 'PARTIAL', 'MISSING', 'CONFLICT', 'N_A']
+const attentionStatuses = new Set<CrosswalkStatus>(['PARTIAL', 'MISSING', 'CONFLICT'])
+const evidenceStatuses = new Set<CrosswalkStatus>(['COVERED', 'PARTIAL', 'CONFLICT'])
+const pageSize = 25
+type CrosswalkFilter = CrosswalkStatus | 'ALL' | 'ATTENTION'
 
 function label(value: string) {
   return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (letter) => letter.toUpperCase())
 }
 
+function needsAttention(finding: CrosswalkFinding) {
+  if (finding.needs_attention !== undefined) return finding.needs_attention
+  return attentionStatuses.has(finding.status)
+    || finding.stale
+    || (finding.status !== finding.candidate_status && !finding.human_verified)
+    || (evidenceStatuses.has(finding.status) && finding.evidence.length === 0)
+}
+
 export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }: CrosswalkWorkspaceProps) {
   const [findings, setFindings] = useState<CrosswalkFinding[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<CrosswalkStatus | 'ALL'>('ALL')
+  const [statusFilter, setStatusFilter] = useState<CrosswalkFilter>('ATTENTION')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [isLoading, setIsLoading] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -38,7 +51,7 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
     try {
       const next = await api.listCrosswalk(projectId)
       setFindings(next)
-      setSelectedId((current) => current && next.some((item) => item.id === current) ? current : next[0]?.id ?? null)
+      setSelectedId((current) => current && next.some((item) => item.id === current) ? current : null)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load crosswalk findings.')
     } finally {
@@ -72,14 +85,22 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase()
     return findings.filter((finding) => (
-      (statusFilter === 'ALL' || finding.status === statusFilter)
+      (statusFilter === 'ALL'
+        || (statusFilter === 'ATTENTION' && needsAttention(finding))
+        || finding.status === statusFilter)
       && (!query || finding.requirement_text.toLowerCase().includes(query) || finding.owner?.toLowerCase().includes(query))
     ))
   }, [findings, search, statusFilter])
 
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize))
+  const pageItems = visible.slice((page - 1) * pageSize, page * pageSize)
+
+  useEffect(() => { setPage(1) }, [projectId, search, statusFilter])
+  useEffect(() => { setPage((current) => Math.min(current, pageCount)) }, [pageCount])
+
   useEffect(() => {
     if (selectedId && !visible.some((finding) => finding.id === selectedId)) {
-      setSelectedId(visible[0]?.id ?? null)
+      setSelectedId(null)
     }
   }, [selectedId, visible])
 
@@ -96,7 +117,7 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
         expected_updated_at: selected.updated_at,
       })
       setFindings((current) => current.map((finding) => finding.id === updated.id ? updated : finding))
-      setAnnouncement(`Finding saved as ${label(updated.status)}${updated.human_verified ? ' and human verified' : ''}.`)
+      setAnnouncement(`Finding saved as ${label(updated.status)}${updated.human_verified ? ' and reviewer confirmed' : ''}.`)
       onContinue?.()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save the finding.')
@@ -107,7 +128,9 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
 
   const moveSelection = (offset: number) => {
     if (!visible.length) return
-    const next = visible[(Math.max(0, selectedIndex) + offset + visible.length) % visible.length]
+    const nextIndex = (Math.max(0, selectedIndex) + offset + visible.length) % visible.length
+    const next = visible[nextIndex]
+    setPage(Math.floor(nextIndex / pageSize) + 1)
     setSelectedId(next.id)
   }
 
@@ -115,31 +138,33 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
     <section className="product-panel crosswalk-panel" aria-labelledby="crosswalk-title">
       <header className="product-panel__header crosswalk-header">
         <div>
-          <span className="product-eyebrow">Requirement-to-response evidence</span>
-          <h2 id="crosswalk-title">Proposal compliance crosswalk</h2>
-          <p>Automated findings are candidates. Only a human-verified evidence decision contributes to readiness.</p>
+          <span className="product-eyebrow">Automated requirement coverage</span>
+          <h2 id="crosswalk-title">Proposal coverage results</h2>
+          <p>Every active requirement is assessed automatically. Start with partial, missing, and conflicting responses; open an item only to investigate or correct it.</p>
         </div>
         <button className="button button--primary" type="button" disabled={isGenerating || proposalDocuments.length === 0} onClick={() => void generate()}>
-          {isGenerating ? 'Analyzing response…' : findings.length ? 'Reanalyze response' : 'Generate crosswalk'}
+          {isGenerating ? 'Analyzing proposal…' : findings.length ? 'Reanalyze proposal' : 'Analyze proposal'}
         </button>
       </header>
 
       {proposalDocuments.length === 0 && (
         <div className="crosswalk-blocker" role="status">
           <strong>Proposal response required</strong>
-          <span>Upload and classify at least one synthetic proposal volume before generating findings.</span>
+          <span>Upload at least one synthetic proposal volume to run the automated coverage assessment.</span>
         </div>
       )}
       {error && <p className="product-error crosswalk-message" role="alert">{error}</p>}
       <p className="visually-hidden" role="status" aria-live="polite">{announcement}</p>
 
       <div className="crosswalk-summary" aria-label="Crosswalk finding summary">
+        <button type="button" className={`crosswalk-summary__attention${statusFilter === 'ATTENTION' ? ' is-active' : ''}`} onClick={() => setStatusFilter(statusFilter === 'ATTENTION' ? 'ALL' : 'ATTENTION')}>
+          <span>Needs attention</span><strong>{findings.filter(needsAttention).length}</strong>
+        </button>
         {statuses.map((status) => (
           <button key={status} type="button" className={`crosswalk-summary__${status.toLowerCase()}${statusFilter === status ? ' is-active' : ''}`} onClick={() => setStatusFilter(statusFilter === status ? 'ALL' : status)}>
             <span>{label(status)}</span><strong>{counts[status]}</strong>
           </button>
         ))}
-        <div><span>Human verified</span><strong>{findings.filter((finding) => finding.human_verified).length}/{findings.length}</strong></div>
       </div>
 
       {isLoading ? (
@@ -147,34 +172,59 @@ export function CrosswalkWorkspace({ projectId, proposalDocuments, onContinue }:
       ) : findings.length === 0 ? (
         <div className="product-empty crosswalk-empty">
           <strong>No crosswalk findings yet</strong>
-          <p>After validating requirements and uploading proposal volumes, generate conservative candidate matches for human review.</p>
+          <p>Upload a proposal to compare it with every active requirement. You can also run the analysis again after source changes.</p>
         </div>
       ) : (
         <div className={`crosswalk-layout${selected ? ' crosswalk-layout--open' : ''}`}>
           <div className="crosswalk-register">
             <div className="crosswalk-filters" role="search" aria-label="Filter crosswalk findings">
               <label>Search<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Requirement or owner" /></label>
-              <label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CrosswalkStatus | 'ALL')}><option value="ALL">All findings</option>{statuses.map((status) => <option key={status} value={status}>{label(status)}</option>)}</select></label>
+              <label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CrosswalkFilter)}><option value="ATTENTION">Needs attention</option><option value="ALL">All findings</option>{statuses.map((status) => <option key={status} value={status}>{label(status)}</option>)}</select></label>
               <button className="button button--secondary" type="button" onClick={() => { setSearch(''); setStatusFilter('ALL') }}>Clear filters</button>
             </div>
-            <p className="crosswalk-results" role="status">Showing {visible.length} of {findings.length} findings</p>
-            <ol className="crosswalk-list">
-              {visible.map((finding) => (
-                <li key={finding.id}>
-                  <button type="button" aria-pressed={selectedId === finding.id} onClick={() => setSelectedId(finding.id)}>
-                    <div className="crosswalk-card__meta">
-                      <span className={`finding-status finding-status--${finding.status.toLowerCase()}`}>{label(finding.status)}</span>
-                      <span>Section {finding.requirement_section}</span>
-                      <span>{Math.round(finding.score * 100)}% candidate score</span>
-                      {finding.human_verified && <span className="human-verified">✓ Human verified</span>}
-                      {finding.stale && <span className="stale-finding">Needs re-review</span>}
-                    </div>
-                    <strong>{finding.requirement_text}</strong>
-                    <span>{finding.evidence[0]?.excerpt || 'No proposal evidence found.'}</span>
-                  </button>
-                </li>
-              ))}
-            </ol>
+            <p className="crosswalk-results" role="status">
+              {visible.length === 0
+                ? `0 of ${findings.length} findings`
+                : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, visible.length)} of ${visible.length} matching findings${visible.length === findings.length ? '' : ` (${findings.length} total)`}`}
+            </p>
+            {visible.length === 0 ? (
+              <div className="product-empty crosswalk-filter-empty">
+                <strong>{statusFilter === 'ATTENTION' ? 'No findings need attention' : 'No findings match these filters'}</strong>
+                <p>{statusFilter === 'ATTENTION'
+                  ? 'The automated assessment found no gaps, stale results, evidence issues, or unconfirmed overrides. Choose Covered or All findings to inspect the supporting evidence.'
+                  : 'Adjust or clear the filters to broaden the results.'}</p>
+              </div>
+            ) : (
+              <>
+                <ol className="crosswalk-list" start={(page - 1) * pageSize + 1}>
+                  {pageItems.map((finding) => (
+                    <li key={finding.id}>
+                      <button type="button" aria-pressed={selectedId === finding.id} onClick={() => setSelectedId(finding.id)}>
+                        <div className="crosswalk-card__meta">
+                          <span className={`finding-status finding-status--${finding.status.toLowerCase()}`}>{label(finding.status)}</span>
+                          <span>Section {finding.requirement_section}</span>
+                          <span>{Math.round(finding.score * 100)}% candidate score</span>
+                          {finding.human_verified && <span className="human-verified">✓ Reviewer confirmed</span>}
+                          {needsAttention(finding) && <span className="stale-finding">Needs attention</span>}
+                        </div>
+                        <strong>{finding.requirement_text}</strong>
+                        <span>{finding.evidence[0]?.excerpt || 'No proposal evidence found.'}</span>
+                        {needsAttention(finding) && finding.attention_reasons?.[0] && (
+                          <span className="finding-attention-reason">{finding.attention_reasons[0]}</span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+                <nav className="crosswalk-pagination" aria-label="Crosswalk finding pages">
+                  <span>Page {page} of {pageCount}</span>
+                  <div>
+                    <button className="button button--secondary" type="button" disabled={page === 1} onClick={() => { setPage((current) => Math.max(1, current - 1)); setSelectedId(null) }}>Previous page</button>
+                    <button className="button button--secondary" type="button" disabled={page === pageCount} onClick={() => { setPage((current) => Math.min(pageCount, current + 1)); setSelectedId(null) }}>Next page</button>
+                  </div>
+                </nav>
+              </>
+            )}
           </div>
 
           {selected && (
@@ -244,7 +294,11 @@ function CrosswalkFindingEditor({
   }, [finding])
 
   const submit = async () => {
-    if (verified && !reviewer.trim()) { setLocalError('A reviewer label is required for human verification.'); return }
+    if (status !== finding.candidate_status && (!verified || !reviewer.trim())) {
+      setLocalError('Changing the automated result requires reviewer confirmation and a reviewer label.')
+      return
+    }
+    if (verified && !reviewer.trim()) { setLocalError('A reviewer label is required for reviewer confirmation.'); return }
     if (verified && ['COVERED', 'PARTIAL', 'CONFLICT'].includes(status) && finding.evidence.length === 0) {
       setLocalError('Add proposal evidence before verifying this finding status.')
       return
@@ -277,7 +331,7 @@ function CrosswalkFindingEditor({
   return (
     <aside className="crosswalk-editor" aria-labelledby="crosswalk-editor-title">
       <header>
-        <div><span>Finding {position} of {total}</span><h3 id="crosswalk-editor-title">Review response coverage</h3></div>
+        <div><span>Finding {position} of {total}</span><h3 id="crosswalk-editor-title">Inspect or correct coverage</h3></div>
         <button type="button" aria-label="Close crosswalk finding" onClick={onClose}>×</button>
       </header>
       <div className="crosswalk-editor__body">
@@ -327,7 +381,7 @@ function CrosswalkFindingEditor({
           <label>Due date<input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
         </div>
         <label className="crosswalk-notes">Resolution note<textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
-        <label className="human-verification"><input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} /><span>I verified this finding against the cited proposal evidence.</span></label>
+        <label className="human-verification"><input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} /><span>I reviewed this finding against the cited proposal evidence. Required only when overriding the automated result.</span></label>
         {localError && <p className="product-error" role="alert">{localError}</p>}
       </div>
       <footer>

@@ -9,7 +9,7 @@ interface ProposalWorkspaceProps {
   documents: ProjectDocument[]
   isAnonymous: boolean
   onDocumentsChanged: () => void
-  onContinue?: () => void
+  onAnalysisComplete?: () => void
 }
 
 export function ProposalWorkspace({
@@ -17,7 +17,7 @@ export function ProposalWorkspace({
   documents,
   isAnonymous,
   onDocumentsChanged,
-  onContinue,
+  onAnalysisComplete,
 }: ProposalWorkspaceProps) {
   const [files, setFiles] = useState<File[]>([])
   const [volumeName, setVolumeName] = useState('')
@@ -34,27 +34,37 @@ export function ProposalWorkspace({
   const chooseFiles = (event: ChangeEvent<HTMLInputElement>) => {
     setFiles(Array.from(event.target.files ?? []))
     setAcknowledged(false)
+    event.target.value = ''
   }
 
   const upload = async () => {
-    if (!files.length || !volumeName.trim() || (isAnonymous && !acknowledged)) return
+    if (!files.length || (isAnonymous && !acknowledged)) return
     setIsUploading(true)
     setError(null)
     setMessage(null)
+    let uploaded: ProjectDocument[]
     try {
-      const uploaded = await api.uploadDocuments(projectId, files, {
+      uploaded = await api.uploadDocuments(projectId, files, {
         classification: 'PROPOSAL_VOLUME',
-        volume_name: volumeName.trim(),
-        classification_notes: 'Uploaded through the proposal-response workflow.',
+        volume_name: volumeName.trim() || files[0]?.name || 'Proposal response',
+        classification_notes: 'Uploaded for automated proposal coverage analysis.',
       })
-      setFiles([])
-      setVolumeName('')
-      setAcknowledged(false)
-      setMessage(`${uploaded.length} proposal ${uploaded.length === 1 ? 'file is' : 'files are'} ready for crosswalk analysis.`)
-      onDocumentsChanged()
-      onContinue?.()
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload proposal files.')
+      setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload the proposal files.')
+      setIsUploading(false)
+      return
+    }
+
+    setFiles([])
+    setVolumeName('')
+    setAcknowledged(false)
+    onDocumentsChanged()
+    try {
+      const summary = await api.generateCrosswalk(projectId)
+      setMessage(`${uploaded.length} proposal ${uploaded.length === 1 ? 'file was' : 'files were'} uploaded and ${summary.requirements_analyzed.toLocaleString()} requirements were analyzed.`)
+      onAnalysisComplete?.()
+    } catch (analysisError) {
+      setError(`The proposal was uploaded, but the automated assessment failed: ${analysisError instanceof Error ? analysisError.message : 'unknown error'}. Use Reanalyze proposal below to retry.`)
     } finally {
       setIsUploading(false)
     }
@@ -64,9 +74,9 @@ export function ProposalWorkspace({
     <section className="product-panel" aria-labelledby="proposal-workspace-title">
       <header className="product-panel__header">
         <div>
-          <span className="product-eyebrow">Proposal evidence</span>
-          <h2 id="proposal-workspace-title">Upload proposal response</h2>
-          <p>Keep proposal volumes separate from the solicitation package so response evidence can be cited accurately.</p>
+          <span className="product-eyebrow">Proposal input</span>
+          <h2 id="proposal-workspace-title">Upload and analyze the proposal</h2>
+          <p>The proposal is compared automatically against every active requirement. No requirement-by-requirement approval is needed first.</p>
         </div>
         <span className="document-count-badge">{proposalDocuments.length} volume{proposalDocuments.length === 1 ? '' : 's'}</span>
       </header>
@@ -81,12 +91,11 @@ export function ProposalWorkspace({
       <div className="proposal-layout">
         <div className="proposal-upload">
           <label>
-            Proposal volume or upload group name <span aria-hidden="true">*</span>
+            Proposal volume or upload group name <span>(optional)</span>
             <input
               value={volumeName}
               onChange={(event) => setVolumeName(event.target.value)}
               placeholder="Example: Volume II - Technical"
-              required
             />
           </label>
           <label className="native-file-control">
@@ -123,10 +132,10 @@ export function ProposalWorkspace({
           <button
             className="button button--primary product-primary-action"
             type="button"
-            disabled={!files.length || !volumeName.trim() || isUploading || (isAnonymous && !acknowledged)}
+            disabled={!files.length || isUploading || (isAnonymous && !acknowledged)}
             onClick={() => void upload()}
           >
-            {isUploading ? 'Uploading and classifying…' : 'Upload proposal response'}
+            {isUploading ? 'Uploading and analyzing…' : 'Upload and analyze proposal'}
           </button>
         </div>
 
@@ -135,7 +144,7 @@ export function ProposalWorkspace({
           {proposalDocuments.length === 0 ? (
             <div className="product-empty">
               <strong>No proposal response uploaded</strong>
-              <p>Add synthetic proposal volumes to enable the requirement crosswalk.</p>
+              <p>Add synthetic proposal volumes to assess coverage against the solicitation requirements.</p>
             </div>
           ) : (
             <ul>

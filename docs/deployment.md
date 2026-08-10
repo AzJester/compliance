@@ -8,7 +8,7 @@ This guide publishes the anonymous PUBLIC/synthetic-data prototype at the intend
 
 The web build remains a **PUBLIC/synthetic-only prototype**. Upload only synthetic material or independently confirmed PUBLIC sources. Do not upload non-public solicitation material, proposal content, CUI, ITAR-controlled technical data, classified information, source-selection information, proprietary content, credentials, or customer data.
 
-Web access defaults to shared HTTP Basic authentication, but this repository's Render Blueprint deliberately sets `COMPLIANCE_WEB_ACCESS_MODE=anonymous`. The deployed UI and API do not ask for or validate a username or password. Anyone on the internet who can reach either public hostname can use all otherwise available operations: create and list projects, read project metadata, document manifests, extracted requirements and review history, submit uploads, run extraction, and change review records. There is no privacy, user identity, ownership, authorization, tenant isolation, or identity-bound audit record.
+Web access defaults to shared HTTP Basic authentication, but this repository's Render Blueprint deliberately sets `COMPLIANCE_WEB_ACCESS_MODE=anonymous`. The deployed UI and API do not ask for or validate a username or password. Anyone on the internet who can reach either public hostname can use all otherwise available operations: create and list projects, read project metadata, document manifests, extracted requirements, crosswalk findings, and optional review history, submit uploads, run extraction and proposal assessment, and change review records. There is no privacy, user identity, ownership, authorization, tenant isolation, or identity-bound audit record.
 
 Anonymous access also permits repeated requests, storage exhaustion, service disruption, malicious or misleading submissions, changes by unrelated visitors, and unexpected hosting cost. File, archive, and request limits reduce the impact of one operation but do not prevent abuse. Exact Host and browser Origin checks, HTTPS, security headers, and `noindex` responses remain enabled, but none of them identifies or authorizes a visitor. An Origin check is not a defense against a scripted client, and the public URL is not a secret.
 
@@ -45,7 +45,7 @@ A free Render web service is suitable only for a disposable synthetic demonstrat
 7. Confirm that `COMPLIANCE_WEB_ACCESS_MODE` is exactly `anonymous` and that the Blueprint does not request or generate `COMPLIANCE_AUTH_USERNAME` or `COMPLIANCE_AUTH_PASSWORD`.
 8. Confirm that preview environments are disabled and automatic deployment waits for GitHub checks to pass. A preview must not copy or mount runtime data.
 9. Create or update the service and follow the first build in the Render **Deploys** view.
-10. Open the generated `onrender.com` address in a signed-out or fresh browser without an `Authorization` header. Confirm that the root page returns `200` without a sign-in prompt, then use only synthetic PUBLIC data to verify the user interface, `/api/health`, project creation, project listing and reading, upload, requirement extraction, and one review save.
+10. Open the generated `onrender.com` address in a signed-out or fresh browser without an `Authorization` header. Confirm that the root page returns `200` without a sign-in prompt, then use only synthetic PUBLIC data to verify the user interface, `/api/health`, project creation, project listing and reading, solicitation upload with automatic requirement extraction, proposal upload with automatic coverage assessment, and one optional manual override.
 
 Do not put secrets, access tokens, or credentials in `render.yaml`, the Docker image, build arguments, repository settings, or deploy logs. Store any identity-proxy credentials in the hosting platform's secret store.
 
@@ -125,7 +125,7 @@ Monitor disk usage and set an operational threshold below capacity. The current 
 - [ ] The owner accepts that anyone can read and change all application records and can attempt abuse or resource exhaustion.
 - [ ] The default `onrender.com` hostname is disabled after custom-domain verification because it is anonymous while enabled.
 - [ ] The application uses one instance and the data directory is on the persistent disk.
-- [ ] A restart retains a synthetic project, document, requirements, and review history.
+- [ ] A restart retains a synthetic project, solicitation and proposal documents, requirements, crosswalk findings, and any optional review history.
 - [ ] Upload limits are compatible across the access proxy and application.
 - [ ] Logs and monitoring do not capture document bodies or extracted text.
 - [ ] A full snapshot has been restored, an independent secure transfer has been recovered, and backup, disk-capacity alerting, abuse response, reset, update, and rollback owners are assigned.

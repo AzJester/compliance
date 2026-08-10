@@ -15,28 +15,31 @@ The application will:
 - Recognize the uniform contract structure described by [FAR 15.204-1](https://www.acquisition.gov/far/15.204-1), including Section L proposal instructions and Section M evaluation factors.
 - Extract candidate requirements from the solicitation, attachments, exhibits, amendments, and documents incorporated by reference.
 - Preserve exact document, page, paragraph, table, and spreadsheet-cell citations for every extracted requirement.
-- Compare each human-validated requirement with evidence from one or more proposal volumes.
+- Compare every active extracted requirement with evidence from one or more proposal volumes without requiring item-by-item approval first.
 - Assign `Compliant`, `Partial`, `Missing`, `Conflicting`, `Not Applicable`, or `Needs Human Review` status.
 - Suggest corrective actions or language without silently rewriting the proposal.
 - Export an Excel compliance workbook, a Word review report, and a versioned JSON archive.
 
-The application is an advisory and traceability system. It cannot guarantee legal or contractual compliance, and it cannot replace final review by proposal management, contracts, security, export-control, pricing, or legal personnel.
+The application is an advisory and traceability system. Automated coverage is not a legal, contractual, or contracting-officer compliance determination, and it cannot replace final review by proposal management, contracts, security, export-control, pricing, or legal personnel.
 
 ## 2. Success criteria
 
 A proposal review is successful when the system can demonstrate that:
 
 - Every imported document, page, worksheet, attachment, exhibit, and amendment has a processing status.
-- Every candidate mandatory statement is represented as an atomic requirement or has been explicitly dismissed by a reviewer with a reason.
+- Every candidate mandatory statement is represented as an active atomic requirement unless a reviewer explicitly excludes it with a reason.
 - Section J listings reconcile with the files actually received.
-- Every CDRL, Section L instruction, and Section M factor has been validated by a human.
-- Every compliance conclusion is supported by a solicitation citation and, when applicable, a proposal citation.
+- Every active CDRL, Section L instruction, Section M factor, and other requirement can flow directly into proposal analysis.
+- Every automated coverage finding is supported by a solicitation citation and, when applicable, a proposal citation.
 - Missing files, unresolved references, submission failures, conflicts, and low-confidence extraction results remain visible until resolved.
-- The final exports reproduce the reviewed state and its audit history.
+- Human confirmation is required for manual overrides and exceptions, not for untouched automated results.
+- The final exports reproduce the current assessed state and any optional audit history.
 
 The application must never report that a proposal is fully compliant merely because no additional requirements were found by an AI model.
 
 ## 3. End-to-end workflow
+
+Project creation establishes the workspace. The primary product flow then has three user-facing stages: **Solicitation**, **Requirements**, and **Proposal compliance**.
 
 ### 3.1 Create a project
 
@@ -44,17 +47,14 @@ The user creates a project and records:
 
 - Solicitation number and title.
 - Issuing agency or component.
-- Solicitation issue date.
-- Proposal and questions deadlines, including time zones.
-- Internal opportunity identifier.
+- Proposal deadline, including its time zone.
 - Expected information sensitivity.
-- Project owner and review status.
 
 The sensitivity selection controls warnings and export behavior. Classified information is rejected because it is outside the first-release security boundary.
 
-### 3.2 Import the solicitation package
+### 3.2 Step 1 — Upload the solicitation and extract requirements
 
-The user imports the base solicitation, attachments, exhibits, amendments, and question-and-answer files. The ingestion service will:
+The user imports the base solicitation, attachments, exhibits, amendments, and question-and-answer files. A base-solicitation type is selected by default, while other source types can be chosen when needed. The ingestion service will:
 
 1. Expand ZIP files in an isolated working directory.
 2. Reject path traversal, executable content, encrypted archives, suspicious compression ratios, and unsupported or corrupted files.
@@ -64,23 +64,15 @@ The user imports the base solicitation, attachments, exhibits, amendments, and q
 6. Apply local OCR to scanned pages and record OCR confidence.
 7. Detect Sections A–M, attachment and exhibit boundaries, forms, and document cross-references.
 8. Build a package manifest and reconcile it against Section J and amendment attachment lists.
+9. Automatically run requirement extraction after a non-reference upload.
 
 Missing, duplicate, password-protected, corrupted, and unreferenced files become findings rather than being silently ignored.
 
-### 3.3 Resolve amendments
+Amendments are retained with their source identity and can invalidate affected proposal findings until the proposal is reanalyzed. Ambiguous replacements, conflicts, and uncertain source precedence remain visible for exception review; they do not create a blanket package-approval stage.
 
-Each amendment is stored as an ordered overlay on the base solicitation. The application will:
+### 3.3 Step 2 — Use the requirements inventory
 
-- Identify added, deleted, and replaced text.
-- Retain both prior and current language for audit purposes.
-- Record which amendment created or superseded each requirement.
-- Highlight ambiguous replacements and conflicting amendment instructions.
-- Invalidate affected crosswalk findings until the proposal is reanalyzed.
-- Require the user to confirm amendment order and completeness.
-
-### 3.4 Extract and validate requirements
-
-Rules and a local structured-output model identify candidate requirements. Compound statements are divided into atomic obligations so that each can be evaluated independently.
+Deterministic rules identify candidate requirements in the current release. A future local structured-output model may supplement those rules. Compound statements are divided into atomic obligations when the source provides a reliable boundary so that each can be evaluated independently.
 
 Every requirement record contains:
 
@@ -94,35 +86,36 @@ Every requirement record contains:
 - Dates, frequencies, quantities, formats, approvals, acceptance conditions, and dependencies.
 - Source amendment and effective package version.
 - Extraction method, rule/model version, and confidence.
-- Human-validation state and reviewer history.
+- Inventory state and optional reviewer history.
 
-Users can approve, edit, split, merge, recategorize, or dismiss a candidate. Dismissals require a reason. AI-generated records remain unvalidated until a human acts on them.
+Every extracted record is immediately active and eligible for proposal analysis. Users open a record only to correct it, optionally confirm it for the audit trail, or exclude a false positive. Exclusions require a reason. Confirmation is not a prerequisite for proposal analysis and does not change the requirement's crosswalk input.
 
-### 3.5 Import and analyze the proposal
+### 3.4 Step 3 — Upload and analyze the proposal
 
-The user imports all proposal volumes and supporting files. The application will:
+The user imports all proposal volumes and supporting files. Upload triggers the coverage assessment automatically. The application will:
 
 1. Map files to the required Section L volume structure.
 2. Check file names, formats, sizes, page limits, section order, and other mechanical submission rules.
-3. Index proposal content with exact-term search, BM25 retrieval, local embeddings, and solicitation identifiers.
-4. Retrieve the strongest candidate evidence for each validated requirement.
-5. Use a local model to evaluate whether that evidence fully, partially, or inconsistently addresses the requirement.
+3. Index proposal content and retrieve the strongest candidate evidence for every active requirement.
+4. Use the current deterministic matcher, with planned local retrieval and model enhancements, to evaluate whether that evidence fully, partially, or inconsistently addresses the requirement.
+5. Preserve exact proposal citations and an evaluation rationale for each finding.
 6. Detect conflicting commitments across proposal volumes, including dates, staffing levels, quantities, technical claims, and assumptions.
 7. Present the requirement, proposal evidence, status, rationale, confidence, and suggested action together.
 
-Users accept or override findings, attach additional evidence, assign an owner, set a resolution date, and record notes. Replacing one proposal volume reruns only impacted comparisons while retaining prior results for change review.
+Untouched, current automated findings with valid evidence do not require human confirmation. Users can override findings, attach additional evidence, assign an owner, set a resolution date, and record notes when an exception needs attention. A manual status override requires reviewer confirmation and an audit record. Replacing one proposal volume reruns impacted comparisons while retaining unaffected current results.
 
-### 3.6 Complete the review
+### 3.5 Resolve exceptions and make the final decision
 
-The application will not permit a `Review Complete` status while any of the following remain:
+The coverage summary directs attention to meaningful blockers rather than the number of unconfirmed records. Blocking conditions include:
 
-- Unvalidated mandatory requirements.
-- Missing Section J files or unprocessed amendments.
-- Unreviewed CDRLs.
-- Unresolved Section L submission failures.
-- Missing evidence for mandatory or high-priority Section M criteria.
+- Missing solicitation requirements or proposal inputs.
+- Stale analysis after a substantive requirement, source-role, or proposal change.
+- Invalid or missing evidence for a finding represented as covered.
+- Partial or missing coverage.
 - Conflicting proposal commitments.
-- Blocking findings or low-confidence results awaiting human review.
+- Manual overrides that have not been confirmed and attributed to a reviewer.
+
+Optional requirement confirmations, optional action records, and untouched automated findings are not completion gates. The proposal team remains responsible for interpreting exceptions and deciding whether the proposal is ready to submit.
 
 ## 4. Requirements taxonomy
 
@@ -240,10 +233,10 @@ Create structured registers for:
 - `Partial`: evidence addresses only part of the requirement or lacks a required detail.
 - `Missing`: no adequate proposal evidence was found.
 - `Conflicting`: the proposal contradicts the solicitation or another proposal statement.
-- `Not Applicable`: a reviewer has documented why the requirement does not apply.
+- `Not Applicable`: the assessment or a documented reviewer decision identifies that the requirement does not apply.
 - `Needs Human Review`: confidence is insufficient or applicability requires expert judgment.
 
-No finding can be marked `Compliant` without cited proposal evidence and a stored evaluation rationale. `Not Applicable` and overrides require reviewer identity, timestamp, and justification.
+No finding can be marked `Compliant` without cited proposal evidence and a stored evaluation rationale. A human change that overrides the automated candidate status requires a reviewer label, timestamp, verification, and justification; untouched automated results do not require a review record.
 
 ### 5.2 Finding fields
 
@@ -296,7 +289,7 @@ Use a modular monolith for the first release:
 
 The processing sequence is:
 
-`Package validation -> extraction/OCR -> structural segmentation -> amendment resolution -> candidate extraction -> atomic normalization -> human validation -> proposal evidence retrieval -> compliance evaluation -> human adjudication -> export`
+`Package validation -> extraction/OCR -> structural segmentation -> amendment handling -> candidate extraction -> atomic normalization -> immediately usable requirements inventory -> proposal evidence retrieval -> automated coverage evaluation -> exception review when needed -> export`
 
 Deterministic rules and templates handle high-precision structures such as clauses, dates, CDRL forms, section boundaries, and file constraints. The local model handles language variation, semantic matching, requirement splitting, and suggested corrections. Model conclusions must cite extracted source spans.
 
@@ -331,8 +324,8 @@ Expose these endpoints on loopback in the default standalone mode:
 - Package and proposal import.
 - Analysis-job submission and status.
 - Source-document and citation retrieval.
-- Requirement validation and review decisions.
-- Crosswalk generation and finding adjudication.
+- Requirement inventory, optional corrections, confirmations, exclusions, and review decisions.
+- Crosswalk generation, automated findings, and audited manual overrides.
 - Export, backup, and restore.
 - Reference-pack import and version reporting.
 - Health checks and content-free diagnostics.
@@ -394,7 +387,7 @@ The importer verifies signatures and hashes before installation. Updates are rol
 
 ### Phase 2: Requirement and specialized registers — 4 weeks
 
-- Implement atomic requirement extraction and human validation.
+- Implement atomic requirement extraction and an immediately usable inventory with optional human correction, confirmation, and exclusion.
 - Add Section L, Section M, CDRL, clause, deliverable, schedule, staffing, and security registers.
 - Add Section J reconciliation, incorporated-reference handling, and amendment versioning.
 
@@ -404,9 +397,9 @@ The importer verifies signatures and hashes before installation. Updates are rol
 - Add mechanical submission checks and evaluation-factor coverage analysis.
 - Add incremental reanalysis when a response file or amendment changes.
 
-### Phase 4: Review workflow and exports — 3 weeks
+### Phase 4: Exception workflow and exports — 3 weeks
 
-- Build dashboards, filters, ownership, due dates, adjudication, completion gates, and Excel/Word/JSON exports.
+- Build dashboards, filters, ownership, due dates, audited overrides, exception-focused completion signals, and Excel/Word/JSON exports.
 - Add backup/restore and signed reference-pack installation.
 
 ### Phase 5: Validation and hardening — 3–4 weeks

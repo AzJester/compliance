@@ -524,6 +524,8 @@ class CrosswalkFindingResponse(BaseModel):
     generated_at: datetime
     updated_at: datetime
     evidence: list[ProposalEvidenceResponse]
+    needs_attention: bool = False
+    attention_reasons: list[str] = Field(default_factory=list)
 
 
 class CrosswalkGenerateSummary(BaseModel):
@@ -609,7 +611,7 @@ class StageProgressResponse(BaseModel):
 class ReadinessResponse(BaseModel):
     project_id: str
     ready: bool
-    readiness_percent: int = Field(ge=0, le=100)
+    readiness_percent: float = Field(ge=0, le=100)
     workflow_stage: WorkflowStage
     workflow_status: WorkflowStatus
     documents_total: int = Field(ge=0)

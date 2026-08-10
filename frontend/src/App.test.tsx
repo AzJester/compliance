@@ -61,7 +61,7 @@ async function createProjectThroughWizard(
 }
 
 async function openSolicitationFiles(user: UserEvent) {
-  await user.click(screen.getByRole('button', { name: /^Files /i }))
+  await user.click(screen.getByRole('button', { name: /^Solicitation /i }))
   expect(screen.getByRole('heading', { name: /import documents/i })).toBeInTheDocument()
 }
 
@@ -91,20 +91,20 @@ describe('App', () => {
 
     render(<App />)
     expect(await screen.findByRole('heading', { level: 1, name: project.name })).toBeInTheDocument()
-    const setupStage = screen.getByRole('button', { name: /^Setup /i })
-    setupStage.focus()
+    const solicitationStage = screen.getByRole('button', { name: /^Solicitation /i })
+    solicitationStage.focus()
     await user.keyboard('{ArrowRight}')
-    const filesStage = screen.getByRole('button', { name: /^Files /i })
-    expect(filesStage).toHaveFocus()
-    expect(filesStage).toHaveAttribute('aria-current', 'step')
-    expect(window.location.search).toContain('stage=solicitation-files')
+    const requirementsStage = screen.getByRole('button', { name: /^Requirements /i })
+    expect(requirementsStage).toHaveFocus()
+    expect(requirementsStage).toHaveAttribute('aria-current', 'step')
+    expect(window.location.search).toContain('stage=requirements')
 
     await user.keyboard('{End}')
-    expect(screen.getByRole('button', { name: /^Reports /i })).toHaveFocus()
-    expect(screen.getByRole('heading', { name: /readiness and unresolved gaps/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Proposal compliance /i })).toHaveFocus()
+    expect(screen.getByRole('heading', { name: /assess proposal compliance/i })).toBeInTheDocument()
     await user.keyboard('{Home}')
-    expect(setupStage).toHaveFocus()
-    expect(setupStage).toHaveAttribute('aria-current', 'step')
+    expect(solicitationStage).toHaveFocus()
+    expect(solicitationStage).toHaveAttribute('aria-current', 'step')
 
     await user.click(screen.getByRole('link', { name: /skip to workspace/i }))
     expect(screen.getByRole('main')).toHaveFocus()
@@ -124,8 +124,8 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { level: 1, name: secondProject.name })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Reports /i })).toHaveAttribute('aria-current', 'step')
-    expect(screen.getByRole('heading', { name: /readiness and unresolved gaps/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Proposal compliance /i })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByRole('heading', { name: /assess proposal compliance/i })).toBeInTheDocument()
   })
 
   it('filters the project switcher and exposes plain-language help', async () => {
@@ -147,7 +147,7 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: /^help$/i }))
     const help = screen.getByRole('dialog', { name: /help and glossary/i })
-    expect(help).toHaveTextContent(/requirement candidate/i)
+    expect(help).toHaveTextContent(/extracted requirement/i)
     expect(help).toHaveTextContent(/section L/i)
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: /help and glossary/i })).not.toBeInTheDocument()
@@ -216,7 +216,7 @@ describe('App', () => {
     })
     expect(createBody.due_at).toBe(new Date('2026-09-15T12:00').toISOString())
     expect(window.location.search).toContain('project=project-1')
-    expect(window.location.search).toContain('stage=setup')
+    expect(window.location.search).toContain('stage=solicitation-files')
   })
 
   it('warns anonymous visitors and requires PUBLIC-data acknowledgement before upload', async () => {
@@ -246,7 +246,7 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: /build a shared compliance record/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /analyze a synthetic solicitation/i })).toBeInTheDocument()
     const warning = screen.getByLabelText(/shared public demo warning/i)
     expect(warning).toHaveTextContent(/public demo: anyone can view or change data/i)
     expect(warning).toHaveTextContent(/synthetic PUBLIC data only/i)
@@ -270,7 +270,6 @@ describe('App', () => {
     const acknowledgement = screen.getByRole('checkbox', {
       name: /only synthetic PUBLIC data.*anyone can view or change uploads retained on shared storage/i,
     })
-    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(acknowledgement)
     expect(uploadButton).toBeEnabled()
     await user.click(uploadButton)
@@ -323,7 +322,6 @@ describe('App', () => {
     const file = new File(['rfp content'], uploaded.name, { type: uploaded.content_type! })
     await user.upload(documentUploadInput(), file)
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
-    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
 
     const table = await screen.findByRole('table')
@@ -375,7 +373,6 @@ describe('App', () => {
     await openSolicitationFiles(user)
 
     await user.upload(documentUploadInput(), new File(['alpha'], staleDocument.name, { type: 'application/pdf' }))
-    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       `/api/projects/${project.id}/documents`,
@@ -431,7 +428,6 @@ describe('App', () => {
     await openSolicitationFiles(user)
 
     await user.upload(documentUploadInput(), new File(['new'], uploaded.name, { type: 'application/pdf' }))
-    await user.selectOptions(screen.getByLabelText(/document role/i), 'BASE_SOLICITATION')
     await user.click(screen.getByRole('button', { name: /upload 1 file$/i }))
     expect(await screen.findByText(uploaded.name)).toBeInTheDocument()
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { api } from '../api/client'
 import type {
+  DocumentProfileUpdate,
   Project,
   ProjectDocument,
-  DocumentProfileUpdate,
   ProjectView,
   ProjectWorkflow,
   ReadinessSummary,
@@ -14,12 +14,9 @@ import type {
 import { CrosswalkWorkspace } from './CrosswalkWorkspace'
 import { DocumentManifest } from './DocumentManifest'
 import { DocumentUpload } from './DocumentUpload'
-import { PackageVerification } from './PackageVerification'
-import { ProjectDashboard } from './ProjectDashboard'
 import { ProposalWorkspace } from './ProposalWorkspace'
 import { ReportsWorkspace } from './ReportsWorkspace'
 import { RequirementsWorkspace } from './RequirementsWorkspace'
-import { SolicitationDetailsReview } from './SolicitationDetailsReview'
 import {
   WorkflowRail,
   type WorkflowStage,
@@ -36,18 +33,25 @@ interface ProjectOverviewProps {
   isAnonymous: boolean
   onUpload: (files: File[], profile: DocumentProfileUpdate) => Promise<void>
   onRefresh: () => void
-  onProjectUpdated: (project: Project) => void
 }
 
 const workflowStageIds = new Set<WorkflowStageId>([
-  'setup',
   'solicitation-files',
-  'verify-package',
   'requirements',
-  'proposal-response',
-  'crosswalk',
-  'reports',
+  'proposal-compliance',
 ])
+
+const legacyStageAliases: Record<string, WorkflowStageId> = {
+  setup: 'solicitation-files',
+  documents: 'solicitation-files',
+  'verify-package': 'solicitation-files',
+  'solicitation-files': 'solicitation-files',
+  requirements: 'requirements',
+  'proposal-response': 'proposal-compliance',
+  crosswalk: 'proposal-compliance',
+  reports: 'proposal-compliance',
+  'proposal-compliance': 'proposal-compliance',
+}
 
 const requirementViews: [ProjectView, string][] = [
   ['requirements', 'All requirements'],
@@ -59,37 +63,31 @@ const requirementViews: [ProjectView, string][] = [
 const attentionStatuses = new Set(['failed', 'error', 'needs_ocr'])
 
 const persistedStage: Record<WorkflowStageId, PersistedWorkflowStage> = {
-  setup: 'PROJECT_SETUP',
   'solicitation-files': 'SOLICITATION_FILES',
-  'verify-package': 'VERIFY_PACKAGE',
   requirements: 'REQUIREMENTS',
-  'proposal-response': 'PROPOSAL_RESPONSE',
-  crosswalk: 'CROSSWALK',
-  reports: 'REPORTS',
+  'proposal-compliance': 'CROSSWALK',
 }
 
 const workflowStageDefinitions: Array<Pick<WorkflowStage, 'id' | 'label' | 'shortLabel'>> = [
-  { id: 'setup', label: 'Project Setup', shortLabel: 'Setup' },
-  { id: 'solicitation-files', label: 'Solicitation Files', shortLabel: 'Files' },
-  { id: 'verify-package', label: 'Verify Package', shortLabel: 'Verify' },
-  { id: 'requirements', label: 'Requirements' },
-  { id: 'proposal-response', label: 'Proposal Response', shortLabel: 'Response' },
-  { id: 'crosswalk', label: 'Crosswalk' },
-  { id: 'reports', label: 'Reports' },
+  { id: 'solicitation-files', label: 'Solicitation', shortLabel: 'Solicitation' },
+  { id: 'requirements', label: 'Requirements inventory', shortLabel: 'Requirements' },
+  { id: 'proposal-compliance', label: 'Proposal compliance', shortLabel: 'Proposal compliance' },
 ]
 
-const workflowStageIdByPersisted = Object.fromEntries(
-  Object.entries(persistedStage).map(([stage, persisted]) => [persisted, stage]),
-) as Record<PersistedWorkflowStage, WorkflowStageId>
+const workflowStageIdByPersisted: Partial<Record<PersistedWorkflowStage, WorkflowStageId>> = {
+  SOLICITATION_FILES: 'solicitation-files',
+  REQUIREMENTS: 'requirements',
+  CROSSWALK: 'proposal-compliance',
+}
 
 const nextActionLabel: Record<WorkflowStageId, string> = {
-  setup: 'Complete project setup',
-  'solicitation-files': 'Review solicitation files',
-  'verify-package': 'Verify package',
-  requirements: 'Review requirements',
-  'proposal-response': 'Review proposal response',
-  crosswalk: 'Review crosswalk',
-  reports: 'Review readiness',
+  'solicitation-files': 'Add solicitation documents',
+  requirements: 'View requirements',
+  'proposal-compliance': 'Assess proposal coverage',
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback
 }
 
 function dueDate(value?: string | null, timeZone?: string | null) {
@@ -102,8 +100,10 @@ function dueDate(value?: string | null, timeZone?: string | null) {
 }
 
 function stageFromUrl(): WorkflowStageId {
-  const stage = new URLSearchParams(window.location.search).get('stage') as WorkflowStageId | null
-  return stage && workflowStageIds.has(stage) ? stage : 'setup'
+  const requested = new URLSearchParams(window.location.search).get('stage')
+  if (!requested) return 'solicitation-files'
+  if (workflowStageIds.has(requested as WorkflowStageId)) return requested as WorkflowStageId
+  return legacyStageAliases[requested] ?? 'solicitation-files'
 }
 
 export function ProjectOverview({
@@ -116,15 +116,16 @@ export function ProjectOverview({
   isAnonymous,
   onUpload,
   onRefresh,
-  onProjectUpdated,
 }: ProjectOverviewProps) {
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(stageFromUrl)
   const [activeRequirementView, setActiveRequirementView] = useState<ProjectView>('requirements')
-  const [packageVerified, setPackageVerified] = useState(false)
   const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null)
   const [readiness, setReadiness] = useState<ReadinessSummary | null>(null)
   const [readinessLoadState, setReadinessLoadState] = useState<'loading' | 'loaded' | 'unavailable'>('loading')
   const [workflowError, setWorkflowError] = useState<string | null>(null)
+  const [pipelineError, setPipelineError] = useState<string | null>(null)
+  const [pipelinePhase, setPipelinePhase] = useState<'idle' | 'uploading' | 'extracting'>('idle')
+  const [analysisRevision, setAnalysisRevision] = useState(0)
   const failures = documents.filter((document) => (
     document.error || attentionStatuses.has(document.status.toLowerCase())
   )).length
@@ -132,23 +133,15 @@ export function ProjectOverview({
     () => documents.filter((document) => document.classification === 'PROPOSAL_VOLUME'),
     [documents],
   )
-  const proposalDocumentCount = proposalDocuments.length
   const authoritativeReadiness = readiness?.project_id === project.id ? readiness : null
 
   const refreshProgress = useCallback(async () => {
     setReadiness(null)
     setReadinessLoadState('loading')
-    const [verificationResult, workflowResult, readinessResult] = await Promise.allSettled([
-      api.listIntakeVerifications(project.id),
+    const [workflowResult, readinessResult] = await Promise.allSettled([
       api.getWorkflow(project.id),
       api.getReadiness(project.id),
     ])
-    if (verificationResult.status === 'fulfilled') {
-      const records = verificationResult.value
-      setPackageVerified(records.length > 0 && records.every((record) => (
-        record.status === 'VERIFIED' || record.status === 'NOT_APPLICABLE'
-      )))
-    }
     if (workflowResult.status === 'fulfilled') setWorkflow(workflowResult.value)
     if (readinessResult.status === 'fulfilled') {
       setReadiness(readinessResult.value)
@@ -175,15 +168,12 @@ export function ProjectOverview({
     url.searchParams.set('project', project.id)
     url.searchParams.set('stage', stage)
     window.history.replaceState(window.history.state, '', url)
-    const status = stageStatus(stage)
     void api.updateWorkflow(project.id, {
       stage: persistedStage[stage],
-      status,
-      // Computed stage blockers stay visible in readiness. Persisting them as the
-      // workflow's manual BLOCKED state would create a separate sticky blocker.
+      status: stageStatus(stage),
       blocker_summary: null,
     }).then(setWorkflow).catch((reason: unknown) => {
-      setWorkflowError(reason instanceof Error ? reason.message : 'Workflow progress could not be saved.')
+      setWorkflowError(errorMessage(reason, 'Workflow progress could not be saved.'))
     })
     if (focusContent) queueMicrotask(() => document.getElementById('workflow-content')?.focus())
   }, [project.id, stageStatus])
@@ -194,9 +184,21 @@ export function ProjectOverview({
     return () => window.removeEventListener('popstate', syncFromHistory)
   }, [])
 
-  const stages = useMemo<WorkflowStage[]>(() => workflowStageDefinitions.map((definition) => {
+  const stages = useMemo<WorkflowStage[]>(() => {
+    const firstIncompleteIndex = workflowStageDefinitions.findIndex((definition) => (
+      stageProgress(definition.id)?.status !== 'COMPLETE'
+    ))
+    return workflowStageDefinitions.map((definition, index) => {
     const progress = stageProgress(definition.id)
     if (progress) {
+      if (progress.status !== 'COMPLETE' && firstIncompleteIndex >= 0 && index > firstIncompleteIndex) {
+        return {
+          ...definition,
+          status: 'waiting',
+          statusLabel: 'Waiting',
+          statusDetail: 'Complete the prior step first.',
+        }
+      }
       const status = progress.status === 'COMPLETE'
         ? 'complete'
         : progress.status === 'BLOCKED'
@@ -207,9 +209,9 @@ export function ProjectOverview({
       const statusLabel = progress.status === 'COMPLETE'
         ? 'Complete'
         : progress.status === 'BLOCKED'
-          ? 'Blocked'
+          ? 'Needs attention'
           : progress.status === 'IN_PROGRESS'
-            ? `${progress.completed_items}/${progress.total_items} complete`
+            ? `${progress.completed_items}/${progress.total_items} processed`
             : 'Waiting'
       return {
         ...definition,
@@ -222,11 +224,9 @@ export function ProjectOverview({
     const hasLocalAttention = definition.id === 'solicitation-files' && failures > 0
     const hasLocalProgress = definition.id === 'solicitation-files'
       ? documents.length > 0
-      : definition.id === 'verify-package'
-        ? packageVerified
-        : definition.id === 'proposal-response'
-          ? proposalDocumentCount > 0
-          : false
+      : definition.id === 'proposal-compliance'
+        ? proposalDocuments.length > 0
+        : false
     return {
       ...definition,
       status: hasLocalAttention ? 'attention' : hasLocalProgress ? 'ready' : 'waiting',
@@ -236,40 +236,44 @@ export function ProjectOverview({
           ? 'Status unavailable'
           : 'Checking progress',
       statusDetail: readinessLoadState === 'unavailable'
-        ? 'Authoritative readiness could not be loaded.'
-        : 'Authoritative readiness is loading.',
+        ? 'Current processing status could not be loaded.'
+        : 'Current processing status is loading.',
     }
-  }), [documents.length, failures, packageVerified, proposalDocumentCount, readinessLoadState, stageProgress])
+    })
+  }, [documents.length, failures, proposalDocuments.length, readinessLoadState, stageProgress])
 
   const nextAction = useMemo(() => {
     const blocked = authoritativeReadiness?.stages.find((stage) => stage.blocking_reasons.length > 0)
-    if (blocked) {
-      const stage = workflowStageIdByPersisted[blocked.stage]
+    const blockedStage = blocked ? workflowStageIdByPersisted[blocked.stage] : undefined
+    if (blocked && blockedStage) {
       return {
-        stage,
-        label: nextActionLabel[stage],
-        description: blocked.blocking_reasons[0] ?? blocked.next_action ?? 'Review this workflow stage.',
+        stage: blockedStage,
+        label: nextActionLabel[blockedStage],
+        description: blocked.blocking_reasons[0] ?? blocked.next_action ?? 'Review this step.',
       }
     }
-    if (authoritativeReadiness) {
+    if (authoritativeReadiness?.ready) {
       return {
-        stage: 'reports' as const,
-        label: 'Review readiness',
-        description: authoritativeReadiness.next_action ?? 'Review readiness and download the current compliance records.',
+        stage: 'proposal-compliance' as const,
+        label: 'Review assessment',
+        description: 'The automated assessment found coverage for every active requirement.',
       }
     }
-    if (documents.length === 0) {
-      return { stage: 'solicitation-files' as const, label: 'Add solicitation files', description: 'No source package is registered yet.' }
-    }
-    if (failures > 0) {
-      return { stage: 'solicitation-files' as const, label: 'Resolve document issues', description: `${failures} ${failures === 1 ? 'file needs' : 'files need'} attention.` }
+    if (documents.length === 0 || failures > 0) {
+      return {
+        stage: 'solicitation-files' as const,
+        label: documents.length === 0 ? 'Add solicitation documents' : 'Resolve document issues',
+        description: documents.length === 0
+          ? 'Upload the solicitation package to begin.'
+          : `${failures} ${failures === 1 ? 'file needs' : 'files need'} attention.`,
+      }
     }
     return {
-      stage: 'setup' as const,
-      label: 'Review project setup',
+      stage: 'requirements' as const,
+      label: 'View requirements',
       description: readinessLoadState === 'unavailable'
-        ? 'Current readiness could not be loaded. Retry before relying on workflow completion.'
-        : 'Authoritative readiness is still loading.',
+        ? 'Current processing status could not be loaded. Retry before relying on the assessment.'
+        : 'Confirm that the requirement inventory has been extracted.',
     }
   }, [authoritativeReadiness, documents.length, failures, readinessLoadState])
 
@@ -284,6 +288,37 @@ export function ProjectOverview({
     const nextView = requirementViews[nextIndex][0]
     setActiveRequirementView(nextView)
     queueMicrotask(() => document.getElementById(`requirement-view-${nextView}`)?.focus())
+  }
+
+  const uploadAndExtract = async (files: File[], profile: DocumentProfileUpdate) => {
+    setPipelineError(null)
+    setPipelinePhase('uploading')
+    let uploadCompleted = false
+    try {
+      await onUpload(files, profile)
+      uploadCompleted = true
+      if (profile.classification === 'REFERENCE') {
+        onRefresh()
+        await refreshProgress()
+        return
+      }
+      setPipelinePhase('extracting')
+      await api.extractRequirements(project.id)
+      onRefresh()
+      await refreshProgress()
+      navigateStage('requirements', true)
+    } catch (reason) {
+      if (!uploadCompleted) throw reason
+      setPipelineError(`The files were uploaded, but requirement extraction failed: ${errorMessage(reason, 'unknown error')}`)
+    } finally {
+      setPipelinePhase('idle')
+    }
+  }
+
+  const analysisComplete = () => {
+    setAnalysisRevision((current) => current + 1)
+    onRefresh()
+    void refreshProgress()
   }
 
   return (
@@ -310,28 +345,24 @@ export function ProjectOverview({
 
       {workflowError && (
         <div className="inline-alert inline-alert--error" role="alert">
-          Progress is visible, but could not be saved: {workflowError}
+          Progress is visible, but the selected step could not be saved: {workflowError}
         </div>
       )}
-
+      {pipelineError && <div className="inline-alert inline-alert--error" role="alert">{pipelineError}</div>}
       {readinessLoadState === 'unavailable' && (
         <div className="inline-alert" role="status">
-          Current readiness could not be loaded. Workflow stages remain conservatively incomplete until the service responds.
+          Current processing status could not be loaded. The records remain available, but completion indicators may be stale.
         </div>
       )}
-
       {workflow && (
         <p className="visually-hidden" aria-live="polite">
-          Saved workflow stage {workflow.stage.replaceAll('_', ' ').toLowerCase()}, status {workflow.status.replaceAll('_', ' ').toLowerCase()}.
+          Saved workflow step {workflow.stage.replaceAll('_', ' ').toLowerCase()}, status {workflow.status.replaceAll('_', ' ').toLowerCase()}.
         </p>
       )}
 
       {activeStage !== nextAction.stage && (
         <aside className="next-action-bar" aria-label="Recommended next action">
-          <div>
-            <span>Recommended next</span>
-            <strong>{nextAction.description}</strong>
-          </div>
+          <div><span>Recommended next</span><strong>{nextAction.description}</strong></div>
           <button className="button button--primary" type="button" onClick={() => navigateStage(nextAction.stage, true)}>
             {nextAction.label} <span aria-hidden="true">→</span>
           </button>
@@ -339,27 +370,21 @@ export function ProjectOverview({
       )}
 
       <div id="workflow-content" className="workflow-content" tabIndex={-1}>
-        {activeStage === 'setup' && (
-          <ProjectDashboard
-            project={project}
-            documents={documents}
-            packageVerified={packageVerified}
-            readiness={authoritativeReadiness}
-            onNavigate={(stage) => navigateStage(stage, true)}
-            onProjectUpdated={(updated) => {
-              onProjectUpdated(updated)
-              void refreshProgress()
-            }}
-          />
-        )}
-
         {activeStage === 'solicitation-files' && (
           <>
+            <header className="stage-heading">
+              <div>
+                <div className="section-kicker">Step 1</div>
+                <h2>Upload the solicitation</h2>
+                <p>Files are processed and their requirements are extracted automatically after upload.</p>
+              </div>
+            </header>
             <DocumentUpload
-              state={uploadState}
+              state={pipelinePhase === 'idle' ? uploadState : 'uploading'}
               message={uploadMessage}
               isAnonymous={isAnonymous}
-              onUpload={onUpload}
+              busyLabel={pipelinePhase === 'extracting' ? 'Extracting requirements…' : undefined}
+              onUpload={uploadAndExtract}
             />
             <DocumentManifest
               documents={documents}
@@ -375,34 +400,13 @@ export function ProjectOverview({
           </>
         )}
 
-        {activeStage === 'verify-package' && (
-          <>
-            <SolicitationDetailsReview
-              project={project}
-              documents={documents}
-              onProjectUpdated={onProjectUpdated}
-              onProgressChanged={refreshProgress}
-              onEditManually={() => navigateStage('setup', true)}
-            />
-            <PackageVerification
-              projectId={project.id}
-              documents={documents}
-              onVerified={() => {
-                setPackageVerified(true)
-                void refreshProgress()
-                navigateStage('requirements', true)
-              }}
-            />
-          </>
-        )}
-
         {activeStage === 'requirements' && (
           <section className="requirements-stage" aria-labelledby="requirements-stage-title">
             <header className="stage-heading">
               <div>
-                <div className="section-kicker">Solicitation obligations</div>
-                <h2 id="requirements-stage-title">Review requirements</h2>
-                <p>Verify each candidate against the source, then use the focused L, M, and CDRL views.</p>
+                <div className="section-kicker">Step 2</div>
+                <h2 id="requirements-stage-title">Requirements inventory</h2>
+                <p>Every extracted requirement is listed immediately. Open an item only when you need to correct or exclude it.</p>
               </div>
             </header>
             <nav className="requirement-view-tabs" aria-label="Requirement register views" role="tablist">
@@ -433,31 +437,30 @@ export function ProjectOverview({
           </section>
         )}
 
-        {activeStage === 'proposal-response' && (
-          <ProposalWorkspace
-            projectId={project.id}
-            documents={documents}
-            isAnonymous={isAnonymous}
-            onDocumentsChanged={() => {
-              onRefresh()
-              void refreshProgress()
-            }}
-            onContinue={() => navigateStage('crosswalk', true)}
-          />
-        )}
-
-        {activeStage === 'crosswalk' && (
-          <CrosswalkWorkspace
-            projectId={project.id}
-            proposalDocuments={proposalDocuments}
-            onContinue={() => {
-              void refreshProgress()
-            }}
-          />
-        )}
-
-        {activeStage === 'reports' && (
-          <ReportsWorkspace projectId={project.id} />
+        {activeStage === 'proposal-compliance' && (
+          <section className="proposal-compliance-stage" aria-labelledby="proposal-compliance-title">
+            <header className="stage-heading">
+              <div>
+                <div className="section-kicker">Step 3</div>
+                <h2 id="proposal-compliance-title">Assess proposal compliance</h2>
+                <p>Upload the proposal to compare it against every active solicitation requirement and surface only gaps that need attention.</p>
+              </div>
+            </header>
+            <ProposalWorkspace
+              projectId={project.id}
+              documents={documents}
+              isAnonymous={isAnonymous}
+              onDocumentsChanged={onRefresh}
+              onAnalysisComplete={analysisComplete}
+            />
+            <CrosswalkWorkspace
+              key={`crosswalk:${project.id}:${analysisRevision}`}
+              projectId={project.id}
+              proposalDocuments={proposalDocuments}
+              onContinue={analysisComplete}
+            />
+            <ReportsWorkspace key={`reports:${project.id}:${analysisRevision}`} projectId={project.id} />
+          </section>
         )}
       </div>
     </div>

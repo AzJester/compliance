@@ -2,7 +2,9 @@
 
 # User Guide
 
-This guide covers the complete human-reviewed workflow: create a project, verify the solicitation package, extract and adjudicate requirements, add a synthetic proposal response, crosswalk response evidence, resolve gaps, and export the current compliance records.
+This guide covers the application's three-step workflow: upload a solicitation, use the automatically extracted requirements inventory, and upload a synthetic proposal for an automatic evidence-backed coverage assessment.
+
+> **Important:** Automated coverage is a screening result, not a legal, contractual, or contracting-officer compliance determination. The application helps a proposal team find omissions and conflicts; it does not approve the proposal. Human reviewers remain responsible for manual overrides, genuine exceptions, legal interpretation, and the final submission decision.
 
 ## Data-use boundary
 
@@ -20,21 +22,17 @@ The header should report **Service online**. If it reports that the service is u
 
 ## Follow the guided workflow
 
-Each project has seven stages:
+Each project has three stages:
 
-1. **Setup** records the project, solicitation, agency, and due date.
-2. **Files** uploads and classifies the solicitation package.
-3. **Verify** records package-completeness checks.
-4. **Requirements** extracts and reviews all requirement candidates, including focused Section L, Section M, and CDRL views.
-5. **Response** uploads synthetic proposal volumes separately from the solicitation.
-6. **Crosswalk** finds candidate response evidence and records human decisions.
-7. **Reports** shows readiness, unresolved actions, and exports.
+1. **Solicitation** uploads the source package and automatically extracts its requirements.
+2. **Requirements** lists the complete inventory immediately. Reviewer correction, confirmation, or exclusion is optional exception work, not a gate.
+3. **Proposal compliance** uploads the response, automatically generates the crosswalk, surfaces gaps, and provides the coverage summary and exports.
 
-The workflow rail and recommended-next-action bar show where to continue. A green or automated candidate is never a final compliance decision by itself.
+The workflow rail and recommended-next-action bar show where to continue. You do not have to approve each requirement or each automatically covered finding before moving forward.
 
-## 1. Create and maintain a project
+## Create a project
 
-Select **New project** and complete the two-step wizard:
+Select **New project** and complete the wizard:
 
 1. Enter a descriptive project name.
 2. Add the solicitation number and agency or customer when known.
@@ -42,11 +40,11 @@ Select **New project** and complete the two-step wizard:
 4. Confirm that only synthetic PUBLIC data will be used.
 5. Select **Create project**.
 
-Use one project for one solicitation package. To correct its metadata later, open **Setup**, expand **View or edit project details**, and select **Edit project details**. Sensitivity remains PUBLIC in this release.
+Use one project for one solicitation package. Sensitivity remains PUBLIC in this release.
 
-## 2. Upload and classify solicitation files
+## 1. Upload the solicitation
 
-Open **Files**, choose or drag files into **Import documents**, select one role for that upload batch, acknowledge the PUBLIC-data boundary when prompted, and upload them. Upload files with different roles in separate batches. The application does not silently guess a file's role.
+Open **Solicitation**, choose or drag files into **Import documents**, acknowledge the PUBLIC-data boundary when prompted, and upload them. **Solicitation document** is the default document type, so a normal base-solicitation upload needs no extra classification step.
 
 Supported formats are:
 
@@ -60,105 +58,83 @@ Legacy Office files (`.doc`, `.xls`, and `.ppt`) are not supported. Password-pro
 
 The local defaults are 100 files per request, 100 MiB per file, and 500 MiB per request. The hosted Blueprint uses lower limits: 10 files, 20 MiB per file, and 50 MiB per request.
 
-Choose the applicable file role before uploading. You can later select **Classify** on a manifest row to correct it:
+Use a different document type when the source is not the primary solicitation:
 
-- **Base solicitation** for the primary RFP or solicitation.
 - **Amendment** for formal changes that may supersede earlier text.
-- **Attachment** for a PWS, SOW, exhibit, specification, or other attachment.
+- **Attachment or exhibit** for a PWS, SOW, specification, or other attachment.
 - **CDRL / DD Form 1423** for contract data requirement lists and related forms.
 - **Questions and answers** for government answers or bidder questions.
-- **Reference only** for context that should not become solicitation requirements or proposal evidence.
-- **Proposal response** only for synthetic response volumes; normally add these in the Response stage.
+- **Reference only** for context that should not create requirements or proposal evidence.
 
-Add a short classification note when version, precedence, or package context matters. Use **View text** to inspect the extracted text and **Copy full SHA-256** to copy the complete integrity hash.
+Upload files with different document types in separate batches. You can later select **Classify** on a manifest row to correct a type. Add a short note when version, precedence, or package context matters.
 
-Important processing states are:
+After a non-reference batch is uploaded, the application automatically runs requirement extraction and opens **Requirements**. There is no separate package-verification or candidate-approval stage. If automated extraction fails, the files remain uploaded and the interface tells you to retry from the requirements inventory.
+
+The manifest preserves the original file and its SHA-256 provenance. Use **View text** to inspect extracted text and **Copy full SHA-256** to copy the complete integrity hash. Important processing states are:
 
 - **Extracted**: text is available for deterministic analysis.
 - **Needs OCR**: the PDF appears scanned and cannot be analyzed by this release.
 - **Archive expanded**: the ZIP is registered and accepted contents appear as separate rows.
-- **Error**: extraction failed and requires review.
+- **Error**: extraction failed and needs attention.
 
-A duplicate remains visible for package provenance but is not analyzed twice within the same project.
+A duplicate remains visible for package provenance but is not analyzed twice within the same project. Scanned, corrupted, misclassified, or ambiguous source files are exceptions that still need human attention.
 
-## 3. Verify the package
+## 2. Use the requirements inventory
 
-Open **Verify**. The first panel is **Solicitation details detected**. When the project contains an extracted **Base solicitation** or **Amendment**, the application uses deterministic rules to look for:
+The **Requirements** stage shows every extracted requirement by default. The application uses deterministic, versioned rules inside the running process; it does not send document content to an external model or follow embedded links.
 
-- Solicitation title and solicitation number
-- Issuing agency or office
-- Proposal receipt deadline and source time zone
-- NAICS and PSC/FSC codes
-- Set-aside category and contract type
-- Named points of contact, including their stated roles and contact details
-
-Detection does not change the project. For each candidate, compare the displayed value with its source document, page or structural locator, exact quoted passage, file hash, confidence label, and rationale. Source text is displayed as inert text, not executable markup or a trusted link.
-
-When a base solicitation and amendment disagree, the panel displays a conflict and requires an explicit selection. A reliably numbered amendment is recommended only when its language explicitly changes the field; upload time alone never determines precedence. Ambiguous deadlines, including missing or unclear time zones, cannot be applied. Select the values to approve, enter a self-reported reviewer name, and choose **Apply approved details**. All selected values are revalidated and applied together; if one is stale or invalid, none are changed.
-
-The approved profile remains visible in the panel. Adding or reclassifying a base solicitation or amendment makes the earlier analysis stale and prevents reuse until **Analyze again** completes. Attachments, CDRLs, Q&A files, references, proposal volumes, and unclassified files are not authoritative sources for this screen. If a value cannot be detected reliably, use the project-details editor and verify the controlling source manually.
-
-Below detected details, complete the package checklist. For each item, choose one status:
-
-- **Pending review** when the check is not complete.
-- **Verified** when the package satisfies the check.
-- **Issue found** when a missing file, mismatch, or unresolved condition exists.
-- **Not applicable** when the check does not apply, based on human review.
-
-Enter a reviewer or team label and an optional verification note, then save progress. All checks must be Verified or Not applicable, with no Issue found status, before package verification is complete.
-
-Adding or reclassifying authoritative solicitation material invalidates affected detected details, package verification, and readiness. Reconcile the new package state before relying on earlier findings.
-
-## 4. Extract and review requirements
-
-Open **Requirements** and select **Find requirements**. The application analyzes eligible solicitation text inside the running process using deterministic, versioned rules. It does not send document content to an external model or follow embedded links.
-
-Use the focused registers:
+Focused views are available without changing the underlying inventory:
 
 - **All requirements** covers Sections A–M and unknown sections.
 - **Section L** focuses on proposal organization, content, format, page limits, delivery, and deadlines.
 - **Section M** focuses on factors, subfactors, relative importance, award basis, and rating language.
-- **CDRLs** preserves all available DD Form 1423 Blocks A–F and 1–18, including Block 16 tailoring.
+- **CDRLs** preserves available DD Form 1423 Blocks A–F and 1–18, including Block 16 tailoring.
 
-The default queue emphasizes pending decisions. Use summary filters, search, sorting, and pagination to narrow the register. Select a requirement to open the review panel, then:
+Use summary filters, search, sorting, and pagination to narrow the register. The status labels mean:
 
-1. Compare the candidate with its exact source excerpt, document, and locator.
-2. Correct the normalized text, section, category, obligation owner, or applicability when necessary.
-3. Enter a reviewer label and useful note.
-4. Select **Validate** only after confirming the controlling source.
-5. To reject a false positive, record a dismissal reason and select **Dismiss**.
+- **As extracted** (`PENDING`): available for proposal analysis immediately; no reviewer action is required.
+- **Reviewer confirmed** (`VALIDATED`): optionally checked against the source and retained in the audit history.
+- **Excluded** (`DISMISSED`): omitted from proposal analysis because a reviewer identified a false positive or inapplicable record.
 
-Review history is append-only. A stale concurrent save is rejected and the current record is reloaded. Editing a previously crosswalked requirement invalidates its prior readiness until the crosswalk is regenerated and reviewed again.
+Do not open 1,250 requirements simply to approve them. Open an item only when you need to:
 
-For each CDRL, expand its full DD Form 1423 inventory. **Not captured** values and listed missing fields require manual review. Record a reviewer and mark a complete record **Reviewed for completeness**. If a source-supported exception must be accepted, select **Explicitly waived**, enter the reviewer, and document the waiver reason. Incomplete, unreviewed, or source-stale CDRLs block readiness; merely opening a record does not clear it. Do not infer a DID, schedule, approval code, distribution requirement, or contractual value from an empty field.
+- Correct the normalized text, section, category, obligation owner, or applicability.
+- Confirm a high-risk item for the audit trail.
+- Exclude a false positive with a reason.
 
-## 5. Add the proposal response
+A reviewer label is required when saving one of those human decisions. The source document always controls if the normalized record conflicts with it. Review history is append-only, and a stale concurrent save is rejected so one reviewer cannot silently overwrite another.
 
-Open **Response** and enter a volume or upload-group name. Select one or more synthetic PUBLIC proposal files, confirm they are safe for anonymous disclosure, and upload them.
+Use **Refresh requirements** after adding or reclassifying solicitation documents. Stable records retain reviewer edits and decisions. A substantive correction or an exclude/reopen decision makes an earlier proposal finding stale until the proposal is reanalyzed; merely confirming an unchanged requirement does not.
 
-Proposal uploads are classified atomically as **Proposal response** before they become visible to extraction or crosswalk processing. They are excluded from solicitation requirement extraction. If a proposal document is later reclassified as something else, citations from that document no longer support readiness.
+The CDRL view shows missing or ambiguous DD Form 1423 fields so a reviewer can investigate real exceptions. Those cues do not create a blanket requirement to adjudicate every CDRL before proposal analysis. The rules engine never invents a DID, delivery date, approval code, distribution statement, or other contractual value that is absent from the source.
 
-## 6. Generate and verify the crosswalk
+## 3. Upload and assess the proposal
 
-Open **Crosswalk** and select **Generate crosswalk**. The deterministic matcher evaluates validated requirements against current proposal volumes and assigns a conservative candidate status:
+Open **Proposal compliance**, optionally enter a proposal volume or upload-group name, select one or more synthetic PUBLIC proposal files, acknowledge the disclosure boundary, and select **Upload and analyze proposal**.
 
-- **Covered**: candidate proposal evidence appears to address the requirement.
+Proposal files are classified atomically as **Proposal response** and excluded from solicitation requirement extraction. After upload, the application automatically compares the proposal with every active requirement—both **As extracted** and **Reviewer confirmed** records—and generates an evidence-backed finding. Only **Excluded** requirements are omitted.
+
+The assessment uses these statuses:
+
+- **Covered**: cited proposal evidence appears to address the requirement.
 - **Partial**: related evidence exists but appears incomplete.
-- **Missing**: no adequate candidate evidence was found.
+- **Missing**: no adequate proposal evidence was found.
 - **Conflict**: the response appears to contain a conflicting number, date, or condition.
-- **N/A**: a human reviewer determined the requirement does not apply to the response.
+- **N/A**: the requirement has been determined not to apply to the response.
 
-Candidate scores rank textual similarity; they are not probabilities or compliance guarantees. Select each finding, read the requirement and cited proposal passage, then record status, reviewer label, resolution owner, due date, and notes.
+The crosswalk opens with **Needs attention**, which includes partial, missing, conflicting, stale, unsupported-evidence, and unconfirmed-override findings. Use **Covered** or **All** when you want to inspect successful matches. Candidate scores rank textual similarity; they are not probabilities or compliance guarantees.
 
-When automated evidence is incomplete, select **Add source passage**, choose a proposal volume, highlight the exact passage in the source viewer, and add it as a manual citation. A mistaken manual citation can be removed; removing evidence sends the finding back for review. Automated candidate evidence is replaced by regenerating the crosswalk rather than edited in place. Check **I verified this finding against the cited proposal evidence** only after reviewing the evidence. A reviewer label and valid evidence are required for verified coverage.
+No reviewer confirmation is required for an untouched, current automated finding with valid evidence. Human review is required when a person overrides the candidate status, changes evidence, documents N/A or another exception, or resolves an ambiguous or unsupported finding. A manual status override requires both a reviewer label and confirmation that the cited evidence was checked.
 
-Regenerating after source changes preserves human decisions when appropriate and marks affected decisions for re-review when evidence or requirements changed.
+When automated evidence is incomplete, select **Add source passage**, choose a proposal volume, highlight the exact passage in the source viewer, and add it as a manual citation. A mistaken manual citation can be removed. Automated candidate evidence is replaced by reanalyzing the proposal rather than edited in place.
 
-## 7. Resolve gaps and export records
+Use **Reanalyze proposal** after a requirement or source document changes. Current automated findings are preserved when their inputs remain unchanged; affected findings become stale and are regenerated.
 
-Open **Reports** to see readiness percentage, requirement, CDRL, and crosswalk counts, blocking reasons, and the recommended next action. Readiness requires assigned file roles, completed package verification, validated requirements, reviewed or explicitly waived current CDRLs, current proposal evidence, a human-verified finding for every active requirement, and no unresolved partial, missing, or conflict findings. The workflow rail uses these backend readiness decisions; it does not mark a stage complete from document counts alone.
+### Read the coverage summary
 
-Use the **Action register** to assign a gap or follow-up, optionally link it to the controlling requirement or crosswalk finding, set its owner and due date, and move it through To do, In progress, Blocked, and Done. Completed actions can be shown or hidden. Reviewer and owner labels are unverified text in anonymous mode.
+The coverage summary reports requirements found and assessed, covered and not-applicable items, and partial, missing, or conflicting gaps. The **Reviewer-confirmed (optional)** count is informational; it is not a completion target.
+
+Items needing attention are limited to meaningful exceptions such as missing inputs, stale analysis, invalid or missing evidence, partial or missing coverage, conflicts, and unaudited manual overrides. The optional **Action register** can assign real remediation work without turning every requirement into a task.
 
 Available downloads are:
 
@@ -169,7 +145,7 @@ Exports are snapshots of the current application state, not signed approvals or 
 
 ## Persistence, backup, and recovery
 
-Projects, metadata, extracted text, workflow state, review history, findings, actions, and immutable uploaded blobs persist in the configured data directory. A developer launch defaults to repository-local `.data/`; the packaged deployment uses the persistent path documented in the [deployment guide](deployment.md).
+Projects, metadata, extracted text, workflow state, optional review history, findings, actions, and immutable uploaded blobs persist in the configured data directory. A developer launch defaults to repository-local `.data/`; the packaged deployment uses the persistent path documented in the [deployment guide](deployment.md).
 
 Back up the entire data directory as one unit. It contains both SQLite data and content-addressed files. For a consistent file-level backup:
 
@@ -184,11 +160,11 @@ Treat backups as at least as sensitive as their source. Do not place runtime dat
 ## Current limitations
 
 - No OCR for scanned PDFs.
-- Detected details flag amendment conflicts and can recommend an explicitly changed value from a reliably numbered amendment, but complete amendment precedence, superseded-language resolution, and incorporated-reference reconciliation still require human review.
-- Section L and M registers use extracted text and reviewer classification; structured volume/page-limit and factor-hierarchy models remain future work.
+- Amendment precedence, superseded-language resolution, and incorporated-reference reconciliation still require human review when the sources conflict or are ambiguous.
+- Section L and M registers use extracted text and optional reviewer classification; structured volume/page-limit and factor-hierarchy models remain future work.
 - Register pagination is currently performed in the browser after retrieval.
 - The hosted deployment has no sign-in, privacy, ownership, roles, tenant isolation, verified identities, or user-facing deletion/retention workflow.
 - Anonymous visitors can read and change all records and can attempt storage or compute abuse.
 - The application is not authorized for real proposals, proprietary data, CUI, ITAR-controlled data, classified information, or source-selection material.
 
-Human review of every controlling source, requirement, CDRL, and proposal citation remains mandatory.
+Human review remains necessary for genuine exceptions and the final proposal decision. It is not a requirement-by-requirement approval queue, and the automated coverage summary does not constitute legal or contracting-officer approval.

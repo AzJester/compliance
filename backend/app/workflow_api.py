@@ -279,7 +279,9 @@ def _finding(session: Session, project_id: str, finding_id: str) -> CrosswalkFin
         .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
         .options(
             selectinload(CrosswalkFinding.requirement),
-            selectinload(CrosswalkFinding.evidence).selectinload(ProposalEvidence.document),
+            selectinload(CrosswalkFinding.evidence)
+            .selectinload(ProposalEvidence.document)
+            .selectinload(Document.workflow_profile),
         )
         .where(
             CrosswalkFinding.id == finding_id,
@@ -293,6 +295,39 @@ def _finding(session: Session, project_id: str, finding_id: str) -> CrosswalkFin
     if finding is None:
         raise HTTPException(status_code=404, detail="Crosswalk finding not found.")
     return finding
+
+
+def _finding_attention_reasons(finding: CrosswalkFinding) -> list[str]:
+    reasons: list[str] = []
+    if finding.stale:
+        reasons.append("Reanalyze this finding after source changes.")
+    if any(
+        evidence.document.classification != DocumentClassification.PROPOSAL_VOLUME
+        for evidence in finding.evidence
+    ):
+        reasons.append("Replace evidence that does not come from a proposal volume.")
+    if (
+        finding.status
+        in {CrosswalkStatus.COVERED, CrosswalkStatus.PARTIAL, CrosswalkStatus.CONFLICT}
+        and not finding.evidence
+    ):
+        reasons.append("Add current proposal evidence for this finding.")
+    if finding.status != finding.candidate_status and not finding.human_verified:
+        reasons.append("Confirm or remove the manual status override.")
+    if finding.status in {
+        CrosswalkStatus.PARTIAL,
+        CrosswalkStatus.MISSING,
+        CrosswalkStatus.CONFLICT,
+    }:
+        reasons.append(f"Resolve the {finding.status.value.lower()} proposal coverage result.")
+    return reasons
+
+
+def _finding_response(finding: CrosswalkFinding) -> CrosswalkFindingResponse:
+    reasons = _finding_attention_reasons(finding)
+    return CrosswalkFindingResponse.model_validate(finding).model_copy(
+        update={"needs_attention": bool(reasons), "attention_reasons": reasons}
+    )
 
 
 @router.patch("", response_model=ProjectResponse)
@@ -794,7 +829,6 @@ def _requirement_input_signature(requirements: Iterable[Requirement]) -> str:
             requirement.category.value,
             requirement.obligation_owner.value,
             requirement.applicability.value,
-            requirement.validation_status.value,
         )
         for requirement in requirements
     )
@@ -903,12 +937,21 @@ def generate_crosswalk(
             created += 1
         else:
             changed = finding.candidate_signature != signature
-            if finding.human_verified and changed:
-                finding.stale = True
-                marked_stale += 1
-            elif not finding.human_verified:
+            was_stale = finding.stale
+            active_manual_override = (
+                finding.human_verified and finding.status != finding.candidate_status
+            )
+            if active_manual_override:
+                if changed:
+                    finding.stale = True
+                    marked_stale += 1
+            else:
                 finding.status = candidate_status
                 finding.stale = False
+                if finding.human_verified and (changed or was_stale):
+                    finding.human_verified = False
+                    finding.reviewer = None
+                    finding.reviewed_at = None
             finding.candidate_status = candidate_status
             finding.score = score
             finding.candidate_signature = signature
@@ -982,7 +1025,7 @@ def list_crosswalk(
     finding_status: CrosswalkStatus | None = Query(default=None, alias="status"),
     human_verified: bool | None = Query(default=None),
     session: Session = Depends(get_session),
-) -> list[CrosswalkFinding]:
+) -> list[CrosswalkFindingResponse]:
     _project(session, project_id)
     statement = (
         select(CrosswalkFinding)
@@ -991,7 +1034,9 @@ def list_crosswalk(
         .outerjoin(DocumentProfile, DocumentProfile.document_id == Document.id)
         .options(
             selectinload(CrosswalkFinding.requirement),
-            selectinload(CrosswalkFinding.evidence).selectinload(ProposalEvidence.document),
+            selectinload(CrosswalkFinding.evidence)
+            .selectinload(ProposalEvidence.document)
+            .selectinload(Document.workflow_profile),
         )
         .where(CrosswalkFinding.project_id == project_id)
         .where(Requirement.validation_status != ValidationStatus.DISMISSED)
@@ -1006,7 +1051,7 @@ def list_crosswalk(
         statement = statement.where(CrosswalkFinding.status == finding_status)
     if human_verified is not None:
         statement = statement.where(CrosswalkFinding.human_verified == human_verified)
-    return list(
+    findings = list(
         session.scalars(
             statement.order_by(
                 Requirement.section,
@@ -1016,6 +1061,7 @@ def list_crosswalk(
             )
         )
     )
+    return [_finding_response(finding) for finding in findings]
 
 
 @router.patch("/crosswalk/{finding_id}", response_model=CrosswalkFindingResponse)
@@ -1024,7 +1070,7 @@ def patch_crosswalk_finding(
     finding_id: str,
     patch: CrosswalkFindingPatch,
     session: Session = Depends(get_session),
-) -> CrosswalkFinding:
+) -> CrosswalkFindingResponse:
     _project(session, project_id)
     finding = _finding(session, project_id, finding_id)
     if patch.expected_updated_at is not None and finding.updated_at != patch.expected_updated_at:
@@ -1038,6 +1084,19 @@ def patch_crosswalk_finding(
             detail="reviewer is required to change a verified finding",
         )
     target_status = patch.status if "status" in patch.model_fields_set else finding.status
+    target_human_verified = (
+        patch.human_verified
+        if "human_verified" in patch.model_fields_set
+        else finding.human_verified
+    )
+    target_reviewer = patch.reviewer if "reviewer" in patch.model_fields_set else finding.reviewer
+    if target_status != finding.candidate_status and (
+        not target_human_verified or not target_reviewer
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Manual status overrides require human verification and a reviewer.",
+        )
     if (
         patch.human_verified is True
         and target_status
@@ -1068,7 +1127,7 @@ def patch_crosswalk_finding(
         finding.reviewed_at = None
         finding.stale = False
     session.commit()
-    return _finding(session, project_id, finding_id)
+    return _finding_response(_finding(session, project_id, finding_id))
 
 
 @router.post(
@@ -1178,11 +1237,15 @@ def _stage(
     )
 
 
-def _readiness(session: Session, project: Project) -> ReadinessResponse:
-    workflow = session.get(ProjectWorkflow, project.id)
-    workflow_stage = workflow.stage if workflow is not None else WorkflowStage.PROJECT_SETUP
-    workflow_status = workflow.status if workflow is not None else WorkflowStatus.IN_PROGRESS
+def _coverage_percent(compliant: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    if compliant >= total:
+        return 100.0
+    return min(round((compliant / total) * 100, 2), 99.99)
 
+
+def _readiness(session: Session, project: Project) -> ReadinessResponse:
     documents = list(
         session.scalars(
             select(Document)
@@ -1291,19 +1354,8 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
     cdrls_unreviewed = sum(
         item.status == CDRLAdjudicationStatus.PENDING for item in active_cdrl_adjudications
     )
-    complete_cdrls_unreviewed = sum(
-        item.status == CDRLAdjudicationStatus.PENDING and not item.incomplete
-        for item in active_cdrl_adjudications
-    )
     cdrls_stale = sum(
         item.status != CDRLAdjudicationStatus.PENDING and not item.fresh
-        for item in active_cdrl_adjudications
-    )
-    incomplete_without_waiver = sum(
-        item.incomplete
-        and not (
-            item.status == CDRLAdjudicationStatus.WAIVED and item.fresh and item.effective_ready
-        )
         for item in active_cdrl_adjudications
     )
 
@@ -1323,26 +1375,52 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
             )
         )
     )
-    status_counts = {
-        crosswalk_status: sum(finding.status == crosswalk_status for finding in findings)
-        for crosswalk_status in CrosswalkStatus
-    }
     invalid_evidence_finding_ids = {
         finding.id
         for finding in findings
-        for evidence in finding.evidence
-        if evidence.document.classification != DocumentClassification.PROPOSAL_VOLUME
+        if (
+            any(
+                evidence.document.classification != DocumentClassification.PROPOSAL_VOLUME
+                for evidence in finding.evidence
+            )
+            or (
+                finding.status
+                in {
+                    CrosswalkStatus.COVERED,
+                    CrosswalkStatus.PARTIAL,
+                    CrosswalkStatus.CONFLICT,
+                }
+                and not finding.evidence
+            )
+        )
+    }
+    unreviewed_override_finding_ids = {
+        finding.id
+        for finding in findings
+        if finding.status != finding.candidate_status and not finding.human_verified
+    }
+    stale_finding_ids = {finding.id for finding in findings if finding.stale}
+    effective_findings = [
+        finding
+        for finding in findings
+        if not finding.stale
+        and finding.id not in invalid_evidence_finding_ids
+        and finding.id not in unreviewed_override_finding_ids
+    ]
+    status_counts = {
+        crosswalk_status: sum(
+            finding.status == crosswalk_status for finding in effective_findings
+        )
+        for crosswalk_status in CrosswalkStatus
     }
     verified_findings = [
         finding
-        for finding in findings
+        for finding in effective_findings
         if finding.human_verified
-        and not finding.stale
-        and finding.id not in invalid_evidence_finding_ids
     ]
     compliant_findings = sum(
         finding.status in {CrosswalkStatus.COVERED, CrosswalkStatus.N_A}
-        for finding in verified_findings
+        for finding in effective_findings
     )
     run_state = session.get(CrosswalkRunState, project.id)
     crosswalk_inputs_fresh = bool(
@@ -1357,21 +1435,11 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
     actions_open = sum(action.status != ActionStatus.DONE for action in actions)
     actions_blocked = sum(action.status == ActionStatus.BLOCKED for action in actions)
 
-    setup_fields = [project.name, project.solicitation_number, project.agency, project.due_at]
-    setup_complete = sum(value is not None and value != "" for value in setup_fields)
-    setup_blockers = [] if setup_complete == len(setup_fields) else ["Project setup is incomplete."]
     file_blockers: list[str] = []
     if solicitation_documents == 0:
         file_blockers.append("Upload at least one solicitation document.")
     if documents_classified < documents_total:
         file_blockers.append("Classify every uploaded document.")
-    verify_blockers: list[str] = []
-    if not intake:
-        verify_blockers.append("Initialize and complete the package verification checklist.")
-    if intake_issues:
-        verify_blockers.append(f"Resolve {intake_issues} package verification issue(s).")
-    if len(intake) > intake_verified:
-        verify_blockers.append("Complete the package verification checklist.")
     requirement_blockers: list[str] = []
     if unusable_solicitation_documents:
         requirement_blockers.append(
@@ -1385,31 +1453,17 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
         )
     if not requirements:
         requirement_blockers.append("Extract requirement candidates from the solicitation.")
-    elif requirements_pending:
-        requirement_blockers.append(f"Review {requirements_pending} pending requirement(s).")
-    if complete_cdrls_unreviewed:
-        requirement_blockers.append(f"Human-review {complete_cdrls_unreviewed} CDRL(s).")
-    if incomplete_without_waiver:
-        requirement_blockers.append(
-            "Record an explicit reviewer waiver with reason for "
-            f"{incomplete_without_waiver} incomplete CDRL(s)."
-        )
-    if cdrls_stale:
-        requirement_blockers.append(
-            f"Re-review {cdrls_stale} CDRL adjudication(s) after source changes."
-        )
-    proposal_blockers: list[str] = []
-    if not proposal_documents:
-        proposal_blockers.append("Upload and classify at least one proposal volume.")
     unusable_proposal_documents = sum(
         document.status not in {DocumentStatus.EXTRACTED, DocumentStatus.ARCHIVE_EXPANDED}
         for document in proposal_document_records
     )
+    crosswalk_blockers: list[str] = []
+    if not proposal_documents:
+        crosswalk_blockers.append("Upload and classify at least one proposal volume.")
     if unusable_proposal_documents:
-        proposal_blockers.append(
+        crosswalk_blockers.append(
             f"Resolve {unusable_proposal_documents} proposal document extraction issue(s)."
         )
-    crosswalk_blockers: list[str] = []
     if len(findings) < len(requirements):
         crosswalk_blockers.append("Generate the proposal crosswalk.")
     elif requirements and not crosswalk_inputs_fresh:
@@ -1421,33 +1475,31 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
             "Replace invalid proposal evidence on "
             f"{len(invalid_evidence_finding_ids)} crosswalk finding(s)."
         )
+    if unreviewed_override_finding_ids:
+        crosswalk_blockers.append(
+            "Human-review "
+            f"{len(unreviewed_override_finding_ids)} manually overridden crosswalk finding(s)."
+        )
+    if stale_finding_ids and crosswalk_inputs_fresh:
+        crosswalk_blockers.append(
+            f"Review {len(stale_finding_ids)} stale crosswalk finding(s) after input changes."
+        )
     unverified = sum(
-        not finding.human_verified or finding.stale or finding.id in invalid_evidence_finding_ids
+        not finding.human_verified
+        or finding.stale
+        or finding.id in invalid_evidence_finding_ids
+        or finding.id in unreviewed_override_finding_ids
         for finding in findings
     )
-    if unverified:
-        crosswalk_blockers.append(f"Human-verify {unverified} crosswalk finding(s).")
     gap_count = sum(
-        status_counts[value]
-        for value in (CrosswalkStatus.PARTIAL, CrosswalkStatus.MISSING, CrosswalkStatus.CONFLICT)
+        finding.status
+        in {CrosswalkStatus.PARTIAL, CrosswalkStatus.MISSING, CrosswalkStatus.CONFLICT}
+        for finding in effective_findings
     )
     if gap_count:
         crosswalk_blockers.append(f"Resolve {gap_count} proposal coverage gap(s).")
-    report_blockers = (
-        []
-        if workflow_stage == WorkflowStage.REPORTS and workflow_status == WorkflowStatus.COMPLETE
-        else ["Complete the workflow and generate final reports."]
-    )
 
     stages = [
-        _stage(
-            WorkflowStage.PROJECT_SETUP,
-            "Project setup",
-            setup_complete,
-            len(setup_fields),
-            setup_blockers,
-            "Complete the missing project details." if setup_blockers else None,
-        ),
         _stage(
             WorkflowStage.SOLICITATION_FILES,
             "Solicitation files",
@@ -1457,28 +1509,12 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
             "Upload and classify the solicitation package." if file_blockers else None,
         ),
         _stage(
-            WorkflowStage.VERIFY_PACKAGE,
-            "Verify package",
-            intake_verified,
-            max(len(intake), 1),
-            verify_blockers,
-            "Complete the package verification checklist." if verify_blockers else None,
-        ),
-        _stage(
             WorkflowStage.REQUIREMENTS,
             "Requirements",
-            requirements_validated + cdrls_ready,
-            max(len(requirements) + len(active_cdrl_adjudications), 1),
+            len(requirements),
+            max(len(requirements), 1),
             requirement_blockers,
-            "Review the next requirement candidate." if requirement_blockers else None,
-        ),
-        _stage(
-            WorkflowStage.PROPOSAL_RESPONSE,
-            "Proposal response",
-            min(proposal_documents, 1),
-            1,
-            proposal_blockers,
-            "Upload a proposal volume." if proposal_blockers else None,
+            "Extract the current solicitation requirements." if requirement_blockers else None,
         ),
         _stage(
             WorkflowStage.CROSSWALK,
@@ -1488,30 +1524,20 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
             crosswalk_blockers,
             "Generate or review the proposal crosswalk." if crosswalk_blockers else None,
         ),
-        _stage(
-            WorkflowStage.REPORTS,
-            "Reports",
-            0 if report_blockers else 1,
-            1,
-            report_blockers,
-            "Export the final compliance workbook." if report_blockers else None,
-        ),
     ]
-    # Report generation is an output step, not a prerequisite for compliance readiness.
-    blockers = [reason for stage in stages[:-1] for reason in stage.blocking_reasons]
-    if actions_blocked:
-        blockers.append(f"Resolve {actions_blocked} blocked action(s).")
-    if workflow is not None and workflow.status == WorkflowStatus.BLOCKED:
-        blockers.append(workflow.blocker_summary or "The project workflow is blocked.")
-    completed = sum(stage.completed_items for stage in stages[:-1])
-    total = sum(stage.total_items for stage in stages[:-1])
-    readiness_percent = round((completed / total) * 100) if total else 0
+    blockers = [reason for stage in stages for reason in stage.blocking_reasons]
+    # This percentage is proposal coverage, not workflow progress. Source-file and
+    # extraction steps must not inflate the result shown to proposal reviewers.
+    readiness_percent = _coverage_percent(compliant_findings, len(requirements))
     ready = (
         not blockers
         and bool(requirements)
-        and len(findings) == len(requirements)
+        and len(effective_findings) == len(requirements)
         and compliant_findings == len(requirements)
-        and actions_blocked == 0
+    )
+    authoritative_stage = next(
+        (stage for stage in stages if stage.status != WorkflowStatus.COMPLETE),
+        stages[-1],
     )
     next_action = next(
         (stage.next_action for stage in stages if stage.blocking_reasons and stage.next_action),
@@ -1521,8 +1547,8 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
         project_id=project.id,
         ready=ready,
         readiness_percent=readiness_percent,
-        workflow_stage=workflow_stage,
-        workflow_status=workflow_status,
+        workflow_stage=authoritative_stage.stage,
+        workflow_status=authoritative_stage.status,
         documents_total=documents_total,
         documents_classified=documents_classified,
         proposal_documents=proposal_documents,
@@ -1538,7 +1564,7 @@ def _readiness(session: Session, project: Project) -> ReadinessResponse:
         cdrls_unreviewed=cdrls_unreviewed,
         cdrls_waived=cdrls_waived,
         cdrls_stale=cdrls_stale,
-        crosswalk_total=len(findings),
+        crosswalk_total=len(effective_findings),
         crosswalk_verified=len(verified_findings),
         covered=status_counts[CrosswalkStatus.COVERED],
         partial=status_counts[CrosswalkStatus.PARTIAL],

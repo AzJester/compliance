@@ -17,11 +17,11 @@ interface CdrlRegisterProps {
 }
 
 function adjudicationLabel(adjudication?: CDRLAdjudication) {
-  if (!adjudication) return 'Pending review'
-  if (!adjudication.fresh && adjudication.status !== 'PENDING') return 'Re-review required'
-  if (adjudication.status === 'WAIVED') return adjudication.effective_ready ? 'Waived' : 'Waiver blocked'
-  if (adjudication.status === 'REVIEWED') return adjudication.effective_ready ? 'Reviewed' : 'Reviewed — incomplete'
-  return 'Pending review'
+  if (!adjudication) return 'Not reviewed (optional)'
+  if (!adjudication.fresh && adjudication.status !== 'PENDING') return 'Optional recheck'
+  if (adjudication.status === 'WAIVED') return adjudication.effective_ready ? 'Exception noted' : 'Incomplete note'
+  if (adjudication.status === 'REVIEWED') return adjudication.effective_ready ? 'Completeness noted' : 'Incomplete record'
+  return 'Not reviewed (optional)'
 }
 
 function cdrlValue(cdrl: CDRL, ...keys: (keyof CDRL)[]): string {
@@ -106,7 +106,7 @@ export function CdrlRegister({
     void api.listCdrlAdjudications(projectId)
       .then((items) => { if (active) setAdjudications(items) })
       .catch((reason: unknown) => {
-        if (active) setAdjudicationError(reason instanceof Error ? reason.message : 'Could not load CDRL readiness reviews.')
+        if (active) setAdjudicationError(reason instanceof Error ? reason.message : 'Could not load optional CDRL notes.')
       })
       .finally(() => { if (active) setIsLoadingAdjudications(false) })
     return () => { active = false }
@@ -165,7 +165,7 @@ export function CdrlRegister({
       ) : (
         <>
           {adjudicationError && <p className="product-error" role="alert">{adjudicationError}</p>}
-          {isLoadingAdjudications && <p className="cdrl-adjudication-loading" role="status">Loading CDRL readiness reviews…</p>}
+          {isLoadingAdjudications && <p className="cdrl-adjudication-loading" role="status">Loading optional CDRL notes…</p>}
           <div className="cdrl-table-wrap">
             <table className="cdrl-table">
               <caption className="visually-hidden">Extracted contract data requirements</caption>
@@ -178,7 +178,7 @@ export function CdrlRegister({
                   <th scope="col">First submission</th>
                   <th scope="col">Approval</th>
                   <th scope="col">Completeness</th>
-                  <th scope="col">Review</th>
+                  <th scope="col">Optional note</th>
                   <th scope="col"><span className="visually-hidden">Actions</span></th>
                 </tr>
               </thead>
@@ -272,7 +272,7 @@ export function CdrlRegister({
 
                 {(selectedCdrl.incomplete_fields?.length ?? 0) > 0 && (
                   <section className="missing-fields" aria-label="Missing CDRL fields">
-                    <strong>Missing fields requiring review</strong>
+                    <strong>Missing fields (optional review)</strong>
                     <ul>
                       {selectedCdrl.incomplete_fields?.map((field) => (
                         <li key={field}>{missingFieldLabel(field)}</li>
@@ -295,7 +295,7 @@ export function CdrlRegister({
                     type="button"
                     onClick={() => onReviewRequirement(linkedRequirementId)}
                   >
-                    Review linked requirement
+                    Open linked requirement
                   </button>
                 )}
               </article>
@@ -340,7 +340,7 @@ function CdrlAdjudicationEditor({
 
   const submit = async () => {
     if (status !== 'PENDING' && !reviewer.trim()) {
-      setError('Enter a reviewer label before completing this CDRL review.')
+      setError('Enter a reviewer label to save this optional CDRL note.')
       return
     }
     if (status === 'WAIVED' && !waiverReason.trim()) {
@@ -352,9 +352,9 @@ function CdrlAdjudicationEditor({
     setIsSaving(true)
     try {
       await onSave(cdrl.id, status, reviewer, waiverReason)
-      setAnnouncement(status === 'PENDING' ? 'CDRL review reset to pending.' : 'CDRL readiness review saved.')
+      setAnnouncement(status === 'PENDING' ? 'Optional CDRL note cleared.' : 'Optional CDRL note saved.')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not save the CDRL readiness review.')
+      setError(reason instanceof Error ? reason.message : 'Could not save the optional CDRL note.')
     } finally {
       setIsSaving(false)
     }
@@ -363,11 +363,11 @@ function CdrlAdjudicationEditor({
   const missingFields = adjudication?.missing_fields ?? cdrl.incomplete_fields ?? []
 
   return (
-    <section className="cdrl-adjudication" aria-label="CDRL readiness review">
+    <section className="cdrl-adjudication" aria-label="Optional CDRL completeness note">
       <div className="cdrl-adjudication__heading">
         <div>
-          <strong>Readiness review</strong>
-          <p>Readiness remains blocked until a human confirms a complete record or records an explicit waiver.</p>
+          <strong>Optional completeness note</strong>
+          <p>Use this only to document an exception or completeness check. It does not gate requirement extraction or proposal analysis.</p>
         </div>
         <span className={`cdrl-readiness-status${adjudication?.effective_ready ? ' cdrl-readiness-status--ready' : ''}`}>
           {adjudicationLabel(adjudication)}
@@ -375,19 +375,19 @@ function CdrlAdjudicationEditor({
       </div>
 
       {adjudication && !adjudication.fresh && adjudication.status !== 'PENDING' && (
-        <p className="cdrl-adjudication__warning">The source changed after this decision. Review and save it again.</p>
+        <p className="cdrl-adjudication__warning">The source changed after this note. Recheck it if the note still matters.</p>
       )}
       {missingFields.length > 0 && status === 'REVIEWED' && (
-        <p className="cdrl-adjudication__warning">This record is still incomplete. A reviewed decision will remain blocked unless the missing fields are resolved or explicitly waived.</p>
+        <p className="cdrl-adjudication__warning">This record is still incomplete. That does not stop the automated proposal assessment.</p>
       )}
 
       <div className="cdrl-adjudication__form">
         <label>
           Decision
           <select value={status} onChange={(event) => setStatus(event.target.value as CDRLAdjudicationStatus)} disabled={isLoading || isSaving}>
-            <option value="PENDING">Pending review</option>
-            <option value="REVIEWED">Reviewed for completeness</option>
-            <option value="WAIVED">Explicitly waived</option>
+            <option value="PENDING">Not reviewed (optional)</option>
+            <option value="REVIEWED">Completeness reviewed</option>
+            <option value="WAIVED">Exception / waiver noted</option>
           </select>
         </label>
         <label>
@@ -405,7 +405,7 @@ function CdrlAdjudicationEditor({
       {error && <p className="product-error" role="alert">{error}</p>}
       {announcement && <p className="product-success" role="status">{announcement}</p>}
       <button className="button button--primary" type="button" disabled={isLoading || isSaving} onClick={() => void submit()}>
-        {isSaving ? 'Saving review…' : 'Save CDRL review'}
+        {isSaving ? 'Saving note…' : 'Save optional note'}
       </button>
     </section>
   )

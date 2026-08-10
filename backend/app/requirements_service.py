@@ -257,6 +257,14 @@ _EDITABLE_FIELDS = (
     "validation_status",
 )
 
+_CROSSWALK_RELEVANT_FIELDS = (
+    "requirement_text",
+    "section",
+    "category",
+    "obligation_owner",
+    "applicability",
+)
+
 
 def _state(requirement: Requirement) -> dict[str, object]:
     return {
@@ -327,7 +335,13 @@ def apply_requirement_patch(
         action = ReviewAction.UPDATED
 
     current = _state(requirement)
-    if any(previous[field] != current[field] for field in _EDITABLE_FIELDS):
+    active_state_changed = (
+        previous["validation_status"] == ValidationStatus.DISMISSED.value
+    ) != (current["validation_status"] == ValidationStatus.DISMISSED.value)
+    crosswalk_input_changed = active_state_changed or any(
+        previous[field] != current[field] for field in _CROSSWALK_RELEVANT_FIELDS
+    )
+    if crosswalk_input_changed:
         mark_crosswalk_stale(
             session,
             requirement.project_id,
